@@ -28,6 +28,12 @@ CORES_CLASSIFICACAO = {
 }
 
 CONFIG_GRAFICO_HOME = {"displayModeBar": False, "displaylogo": False}
+PESOS_UPS = {
+    "Sem Vítimas": 1,
+    "Com Vítimas Feridas": 5,
+    "Com Vítimas Fatais": 13,
+}
+UFS_NORDESTE = {"MA", "PI", "CE", "RN", "PB", "PE", "AL", "SE", "BA"}
 
 DIAS_SEMANA = [
     "segunda-feira",
@@ -158,6 +164,34 @@ def _formatar_kpi(chave, valor):
     if INDICADORES[chave]["tipo"] == "razao":
         return f"{valor:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
     return _formatar_inteiro(valor)
+
+
+def _formatar_percentual_risco(valor):
+    return f"{valor:,.2f}%".replace(",", "X").replace(".", ",").replace("X", ".")
+
+
+def _letalidade(df):
+    if df.empty:
+        return None
+    return float(df["mortos"].sum()) / len(df) * 100
+
+
+def _letalidade_formatada(df):
+    valor = _letalidade(df)
+    return "—" if valor is None else _formatar_percentual_risco(valor)
+
+
+def _rotulo_br(valor):
+    if pd.isna(valor) or int(valor) == 0:
+        return "Não informada"
+    return f"BR-{int(valor)}"
+
+
+def _rotulo_trecho(valor):
+    texto = str(valor)
+    if texto.startswith("BR-0 "):
+        return texto.replace("BR-0", "Não informada", 1)
+    return texto
 
 
 def _rotulo_periodo(periodo):
@@ -480,19 +514,20 @@ def _grafico_causas_home(df):
 
 
 def _grafico_classificacao_home(df):
-    contagens = (
-        df["classificacao_acidente"]
-        .value_counts()
-        .rename_axis("classificacao")
-        .reset_index(name="acidentes")
+    contagens = _agrupar_fatias_pequenas(
+        df["classificacao_acidente"].value_counts()
     )
+    tabela = contagens.rename_axis("classificacao").reset_index(name="acidentes")
     figura = px.pie(
-        contagens,
+        tabela,
         names="classificacao",
         values="acidentes",
         hole=0.62,
         color="classificacao",
-        color_discrete_map=CORES_CLASSIFICACAO,
+        color_discrete_map={
+            **CORES_CLASSIFICACAO,
+            "Outros": CORES_PMPB["preto"],
+        },
         category_orders={
             "classificacao": [
                 "Com Vítimas Fatais",
@@ -532,7 +567,7 @@ def _grafico_classificacao_home(df):
 def _grafico_ranking_home(df, filtros):
     if filtros["uf"]:
         contagens = df["br"].dropna().astype(int).value_counts()
-        contagens.index = [f"BR-{valor}" for valor in contagens.index]
+        contagens.index = [_rotulo_br(valor) for valor in contagens.index]
         cor = CORES_PMPB["vermelho_escuro"]
     else:
         contagens = df["uf"].value_counts()
@@ -637,7 +672,10 @@ def _rotulo_grupo(valor):
 def _grafico_barras_indicador(df, coluna, chave, titulo, limite=10):
     valores = _serie_indicador(df, coluna, chave).sort_values(ascending=False).head(limite)
     valores = valores.sort_values(ascending=True)
-    categorias = [_rotulo_grupo(valor) for valor in valores.index]
+    categorias = [
+        _rotulo_br(valor) if coluna == "br" else _rotulo_grupo(valor)
+        for valor in valores.index
+    ]
     rotulos = [_quebrar_rotulo_barras(categoria) for categoria in categorias]
     tabela = pd.DataFrame(
         {
@@ -707,13 +745,19 @@ def _grafico_mensal_indicador(df, periodos, chave):
     return _aplicar_tema(figura)
 
 
-def _grafico_calor_indicador(df, chave):
+def _grafico_calor_indicador(df, chave, filtros=None):
     valores = _serie_indicador(df, ["dia_semana", "hora"], chave)
     tabela = (
         valores.unstack("hora")
         .reindex(index=DIAS_SEMANA, columns=range(24), fill_value=0)
     )
-    texto = ".2f" if INDICADORES[chave]["tipo"] == "razao" else True
+    filtros = filtros or {}
+    mostrar_valores = bool(filtros.get("uf") or filtros.get("municipio"))
+    texto = (
+        (".2f" if INDICADORES[chave]["tipo"] == "razao" else True)
+        if mostrar_valores
+        else False
+    )
     figura = px.imshow(
         tabela,
         x=[f"{hora:02d}" for hora in range(24)],
@@ -744,7 +788,7 @@ def _tabelas_indicador(df, chave):
 
     return (
         [
-            {"nome": _rotulo_grupo(trecho), "valor": _formatar_kpi(chave, valor)}
+            {"nome": _rotulo_trecho(_rotulo_grupo(trecho)), "valor": _formatar_kpi(chave, valor)}
             for trecho, valor in trechos.items()
         ],
         [
@@ -784,19 +828,20 @@ def _comparar_trimestres(df, filtros, chave):
     }
 
 
-def _grafico_calor(df):
+def _grafico_calor(df, filtros=None):
     tabela = (
         df.groupby(["dia_semana", "hora"])
         .size()
         .unstack(fill_value=0)
         .reindex(index=DIAS_SEMANA, columns=range(24), fill_value=0)
     )
+    filtros = filtros or {}
     figura = px.imshow(
         tabela,
         x=[f"{hora:02d}" for hora in range(24)],
         y=DIAS_SEMANA,
         aspect="auto",
-        text_auto=True,
+        text_auto=bool(filtros.get("uf") or filtros.get("municipio")),
         labels={"x": "Hora do dia", "y": "Dia da semana", "color": "Acidentes"},
         color_continuous_scale=[
             [0, "#F5F5F4"],
@@ -811,15 +856,29 @@ def _grafico_calor(df):
     return _aplicar_tema(figura)
 
 
+def _agrupar_fatias_pequenas(contagens):
+    total = contagens.sum()
+    if not total:
+        return contagens
+
+    pequenas = contagens.loc[contagens / total < 0.03]
+    if pequenas.empty:
+        return contagens
+
+    agrupadas = contagens.drop(index=pequenas.index).copy()
+    outras = pequenas.sum()
+    if "Outros" in agrupadas.index:
+        agrupadas.loc["Outros"] += outras
+    else:
+        agrupadas.loc["Outros"] = outras
+    return agrupadas.sort_values(ascending=False)
+
+
 def _grafico_rosca(df, coluna, titulo):
-    contagens = (
-        df[coluna]
-        .value_counts()
-        .rename_axis("categoria")
-        .reset_index(name="acidentes")
-    )
+    contagens = _agrupar_fatias_pequenas(df[coluna].value_counts())
+    tabela = contagens.rename_axis("categoria").reset_index(name="acidentes")
     figura = px.pie(
-        contagens,
+        tabela,
         names="categoria",
         values="acidentes",
         hole=0.58,
@@ -839,6 +898,380 @@ def _grafico_rosca(df, coluna, titulo):
         hovertemplate="%{label}<br>Acidentes: %{value:,.0f}<extra></extra>",
     )
     return _aplicar_tema(figura)
+
+
+def _adicionar_ups(df):
+    dados = df.copy()
+    dados["ups"] = (
+        dados["classificacao_acidente"]
+        .map(PESOS_UPS)
+        .fillna(1)
+        .astype("int64")
+    )
+    return dados
+
+
+def _resumo_risco_por_grupo(df, coluna):
+    resumo = (
+        df.groupby(coluna, dropna=False)
+        .agg(
+            acidentes=("id", "size"),
+            mortos=("mortos", "sum"),
+            feridos_graves=("feridos_graves", "sum"),
+        )
+    )
+    if not resumo.empty:
+        resumo["letalidade"] = resumo["mortos"].div(resumo["acidentes"]) * 100
+    return resumo
+
+
+def _grafico_risco_causas(df, filtros):
+    resumo = _resumo_risco_por_grupo(df, "causa_acidente")
+    minimo = (
+        100
+        if not (filtros.get("uf") or filtros.get("br") or filtros.get("municipio"))
+        else 30
+    )
+    resumo = resumo.loc[resumo["acidentes"] >= minimo].copy()
+    if resumo.empty:
+        return None
+
+    top_causas = resumo.nlargest(5, "mortos").index
+    tabela = resumo.rename_axis("causa").reset_index()
+    rotulos_por_causa = {
+        causa: _quebrar_rotulo_barras(causa) for causa in top_causas
+    }
+    posicoes = [
+        "top center",
+        "bottom center",
+        "middle right",
+        "middle left",
+        "top right",
+    ]
+    posicoes_por_causa = dict(zip(top_causas, posicoes))
+    tabela["rotulo"] = tabela["causa"].map(rotulos_por_causa).fillna("")
+    tabela["posicao_rotulo"] = (
+        tabela["causa"].map(posicoes_por_causa).fillna("top center")
+    )
+    figura = px.scatter(
+        tabela,
+        x="acidentes",
+        y="letalidade",
+        size="mortos",
+        size_max=42,
+        text="rotulo",
+        custom_data=["causa", "mortos"],
+        color_discrete_sequence=[CORES_PMPB["vermelho"]],
+        template="plotly_white",
+    )
+    figura.update_traces(
+        marker={"opacity": 0.72, "line": {"color": "white", "width": 1}},
+        textposition=tabela["posicao_rotulo"].tolist(),
+        textfont={"size": 10, "color": CORES_PMPB["preto"]},
+        cliponaxis=False,
+        hovertemplate=(
+            "<b>%{customdata[0]}</b><br>"
+            "Acidentes: %{x:,.0f}<br>"
+            "Letalidade: %{y:.2f}%<br>"
+            "Mortos: %{customdata[1]:,.0f}<extra></extra>"
+        ),
+    )
+    mediana_x = float(resumo["acidentes"].median())
+    mediana_y = float(resumo["letalidade"].median())
+    figura.add_shape(
+        type="rect",
+        x0=mediana_x,
+        x1=float(resumo["acidentes"].max()),
+        y0=mediana_y,
+        y1=float(resumo["letalidade"].max()),
+        fillcolor="rgba(200, 16, 46, 0.10)",
+        line={"width": 0},
+        layer="below",
+    )
+    figura.add_vline(
+        x=mediana_x,
+        line_dash="dash",
+        line_color=CORES_PMPB["cinza"],
+    )
+    figura.add_hline(
+        y=mediana_y,
+        line_dash="dash",
+        line_color=CORES_PMPB["cinza"],
+    )
+    figura.add_annotation(
+        x=0.98,
+        y=0.97,
+        xref="paper",
+        yref="paper",
+        text="<b>Prioridade</b>",
+        showarrow=False,
+        xanchor="right",
+        font={"color": CORES_PMPB["vermelho_escuro"], "size": 12},
+    )
+    figura.update_layout(
+        xaxis_title="Número de acidentes",
+        yaxis_title="Letalidade (%)",
+        height=420,
+        margin={"l": 60, "r": 20, "t": 20, "b": 50},
+        showlegend=False,
+    )
+    figura.update_yaxes(rangemode="tozero")
+    return _aplicar_tema(figura)
+
+
+def _grafico_risco_barras(df, coluna, minimo=30):
+    resumo = _resumo_risco_por_grupo(df, coluna)
+    resumo = resumo.loc[resumo["acidentes"] >= minimo].copy()
+    if resumo.empty:
+        return None
+
+    resumo = resumo.sort_values("letalidade", ascending=True)
+    tabela = resumo.rename_axis("categoria").reset_index()
+    tabela["rotulo"] = tabela["categoria"].map(_quebrar_rotulo_barras)
+    figura = px.bar(
+        tabela,
+        x="letalidade",
+        y="rotulo",
+        orientation="h",
+        text="letalidade",
+        custom_data=["categoria", "acidentes"],
+        color_discrete_sequence=[CORES_PMPB["vermelho"]],
+        template="plotly_white",
+    )
+    figura.update_traces(
+        texttemplate="%{x:.2f}%",
+        textposition="inside",
+        textfont_color="white",
+        cliponaxis=False,
+        hovertemplate=(
+            "%{customdata[0]}<br>"
+            "Letalidade: %{x:.2f}%<br>"
+            "Acidentes: %{customdata[1]:,.0f}<extra></extra>"
+        ),
+    )
+    figura = _aplicar_tema(figura)
+    rotulos = tabela["rotulo"].tolist()
+    figura.update_layout(
+        xaxis_title="Letalidade (%)",
+        yaxis_title="",
+        height=_altura_barras(rotulos),
+        margin={"l": 160, "r": 20, "t": 20, "b": 40},
+        showlegend=False,
+    )
+    figura.update_yaxes(automargin=True)
+    return figura
+
+
+def _grafico_risco_horas(df):
+    por_hora = (
+        df.groupby("hora")
+        .agg(acidentes=("id", "size"), mortos=("mortos", "sum"))
+        .reindex(range(24), fill_value=0)
+    )
+    letalidade = (
+        por_hora["mortos"]
+        .div(por_hora["acidentes"].where(por_hora["acidentes"] > 0))
+        .mul(100)
+    )
+    figura = make_subplots(specs=[[{"secondary_y": True}]])
+    figura.add_trace(
+        go.Bar(
+            x=list(range(24)),
+            y=por_hora["acidentes"],
+            name="Acidentes",
+            marker_color=CORES_PMPB["cinza"],
+            hovertemplate="Hora %{x:02d}:00<br>Acidentes: %{y:,.0f}<extra></extra>",
+        ),
+        secondary_y=False,
+    )
+    figura.add_trace(
+        go.Scatter(
+            x=list(range(24)),
+            y=letalidade,
+            name="Letalidade",
+            mode="lines+markers",
+            line={"color": CORES_PMPB["vermelho"], "width": 2.5},
+            hovertemplate="Hora %{x:02d}:00<br>Letalidade: %{y:.2f}%<extra></extra>",
+        ),
+        secondary_y=True,
+    )
+    figura.update_layout(
+        template="plotly_white",
+        margin={"l": 45, "r": 45, "t": 20, "b": 45},
+        separators=",.",
+        legend={"orientation": "h", "y": -0.22, "x": 0.5, "xanchor": "center"},
+        hovermode="x unified",
+    )
+    figura.update_xaxes(
+        title_text="Hora do dia",
+        tickmode="array",
+        tickvals=list(range(24)),
+        ticktext=[f"{hora:02d}" for hora in range(24)],
+    )
+    figura.update_yaxes(title_text="Acidentes", rangemode="tozero", secondary_y=False)
+    figura.update_yaxes(title_text="Letalidade (%)", rangemode="tozero", secondary_y=True)
+    return _aplicar_tema(figura)
+
+
+def _grafico_mapa_risco(df, filtros):
+    pontos = df.loc[
+        df["classificacao_acidente"].isin(
+            ("Com Vítimas Fatais", "Com Vítimas Feridas")
+        )
+    ].copy()
+    for coluna in ("latitude", "longitude", "ups"):
+        pontos[coluna] = pd.to_numeric(pontos[coluna], errors="coerce")
+    pontos = pontos.dropna(subset=["latitude", "longitude"])
+    pontos = pontos.loc[
+        pontos["latitude"].between(-90, 90)
+        & pontos["longitude"].between(-180, 180)
+    ]
+    if pontos.empty:
+        return None
+
+    centro = {
+        "lat": float(pontos["latitude"].mean()),
+        "lon": float(pontos["longitude"].mean()),
+    }
+    zoom = 9 if filtros.get("municipio") else 6 if filtros.get("uf") else 3.3
+    figura = px.density_map(
+        pontos,
+        lat="latitude",
+        lon="longitude",
+        z="ups",
+        radius=12,
+        center=centro,
+        zoom=zoom,
+        map_style="carto-positron",
+        opacity=0.8,
+        color_continuous_scale=[
+            [0, "rgba(255,255,255,0)"],
+            [0.3, "#C9A227"],
+            [0.7, "#C8102E"],
+            [1, "#7A0C14"],
+        ],
+        hover_name="municipio",
+        hover_data={
+            "uf": True,
+            "trecho": True,
+            "ups": True,
+            "latitude": False,
+            "longitude": False,
+        },
+        labels={"ups": "UPS", "uf": "UF", "trecho": "Trecho"},
+        template="plotly_white",
+    )
+    figura = _aplicar_tema(figura)
+    figura.update_layout(
+        height=520,
+        autosize=True,
+        margin={"l": 0, "r": 0, "t": 0, "b": 0},
+        map={"center": centro, "zoom": zoom},
+        coloraxis_colorbar={
+            "title": "Severidade (UPS)",
+            "thickness": 12,
+            "len": 0.6,
+        },
+    )
+    return figura
+
+
+def _preparar_cartoes_risco(df, df_completo, filtros):
+    noite = df.loc[df["hora"].isin([18, 19, 20, 21, 22, 23, 0, 1, 2, 3, 4, 5])]
+    dia = df.loc[df["hora"].between(6, 17).fillna(False)]
+    fim_semana = df.loc[df["dia_semana"].isin(["sábado", "domingo"])]
+    dias_uteis = df.loc[
+        df["dia_semana"].isin(
+            [
+                "segunda-feira",
+                "terça-feira",
+                "quarta-feira",
+                "quinta-feira",
+                "sexta-feira",
+            ]
+        )
+    ]
+
+    filtros_benchmark = filtros.copy()
+    filtros_benchmark["uf"] = ""
+    filtros_benchmark["municipio"] = ""
+    base_benchmark = aplicar_filtros(df_completo, filtros_benchmark)
+    nordeste = base_benchmark.loc[base_benchmark["uf"].isin(UFS_NORDESTE)]
+    uf_selecionada = filtros.get("uf") or "UF não selecionada"
+
+    return [
+        {
+            "titulo": "Letalidade geral",
+            "descricao": "Mortos por 100 acidentes no recorte selecionado.",
+            "valor": _letalidade_formatada(df),
+        },
+        {
+            "titulo": "Noite x dia",
+            "descricao": "Comparação entre 18h–5h e 6h–17h.",
+            "comparacoes": [
+                {"rotulo": "Noite", "valor": _letalidade_formatada(noite)},
+                {"rotulo": "Dia", "valor": _letalidade_formatada(dia)},
+            ],
+        },
+        {
+            "titulo": "Fim de semana x dias úteis",
+            "descricao": "Comparação de sábado e domingo com segunda a sexta.",
+            "comparacoes": [
+                {"rotulo": "Fim de semana", "valor": _letalidade_formatada(fim_semana)},
+                {"rotulo": "Dias úteis", "valor": _letalidade_formatada(dias_uteis)},
+            ],
+        },
+        {
+            "titulo": "Comparação regional",
+            "descricao": "Letalidade da UF selecionada, Nordeste e Brasil.",
+            "comparacoes": [
+                {
+                    "rotulo": uf_selecionada,
+                    "valor": (
+                        _letalidade_formatada(df)
+                        if filtros.get("uf")
+                        else "—"
+                    ),
+                },
+                {"rotulo": "Nordeste", "valor": _letalidade_formatada(nordeste)},
+                {"rotulo": "Brasil", "valor": _letalidade_formatada(base_benchmark)},
+            ],
+        },
+    ]
+
+
+def _preparar_tabela_ups(df):
+    dados = _adicionar_ups(df)
+    dados = dados.loc[dados["trecho"] != "NÃO INFORMADO"]
+    trechos = (
+        dados.groupby(["trecho", "uf"], dropna=False)
+        .agg(
+            acidentes=("id", "size"),
+            mortos=("mortos", "sum"),
+            feridos_graves=("feridos_graves", "sum"),
+            ups=("ups", "sum"),
+        )
+        .sort_values(["ups", "acidentes"], ascending=False)
+        .head(15)
+        .reset_index()
+    )
+    maior_ups = trechos["ups"].max() if not trechos.empty else 0
+    return [
+        {
+            "posicao": indice,
+            "trecho": _rotulo_trecho(linha.trecho),
+            "uf": linha.uf,
+            "acidentes": _formatar_inteiro(linha.acidentes),
+            "mortos": _formatar_inteiro(linha.mortos),
+            "feridos_graves": _formatar_inteiro(linha.feridos_graves),
+            "ups": _formatar_inteiro(linha.ups),
+            "letalidade": _formatar_percentual_risco(
+                linha.mortos / linha.acidentes * 100
+            ),
+            "largura": linha.ups / maior_ups * 100 if maior_ups else 0,
+        }
+        for indice, linha in enumerate(trechos.itertuples(index=False), start=1)
+    ]
 
 
 def _grafico_mapa(df, filtros=None):
@@ -947,7 +1380,7 @@ def _preparar_tabelas(df):
     return (
         [
             {
-                "trecho": linha.trecho,
+                "trecho": _rotulo_trecho(linha.trecho),
                 "acidentes": _formatar_inteiro(linha.acidentes),
                 "mortos": _formatar_inteiro(linha.mortos),
             }
@@ -969,9 +1402,7 @@ def _gerar_graficos(df, periodos, filtros):
     mapa = _grafico_mapa(df, filtros)
     if filtros["uf"]:
         contagens_ranking = df["br"].dropna().astype(int).value_counts()
-        contagens_ranking.index = [
-            f"BR-{valor}" for valor in contagens_ranking.index
-        ]
+        contagens_ranking.index = [_rotulo_br(valor) for valor in contagens_ranking.index]
         titulo_ranking = f"Ranking de acidentes por BR · {filtros['uf']}"
     else:
         contagens_ranking = df["uf"].value_counts()
@@ -1003,7 +1434,7 @@ def _gerar_graficos(df, periodos, filtros):
                 CORES_PMPB["vermelho_escuro"],
             )
         ),
-        "calor": _figura_div(_grafico_calor(df)),
+        "calor": _figura_div(_grafico_calor(df, filtros)),
         "fase": _figura_div(_grafico_rosca(df, "fase_dia", "Acidentes por fase do dia")),
         "clima": _figura_div(
             _grafico_rosca(
@@ -1202,7 +1633,7 @@ def indicador(request, slug):
                     limite=None,
                 )
             ),
-            "calor": _figura_div(_grafico_calor_indicador(filtrado, slug)),
+            "calor": _figura_div(_grafico_calor_indicador(filtrado, slug, filtros)),
             "mapa": _figura_div(mapa) if mapa is not None else None,
         }
         tabela_trechos, tabela_municipios = _tabelas_indicador(filtrado, slug)
@@ -1226,6 +1657,48 @@ def indicador(request, slug):
         }
     )
     return render(request, "painel/indicador.html", contexto)
+
+
+def risco(request):
+    df = carregar_dados()
+    filtros = ler_filtros(request)
+    filtrado = aplicar_filtros(df, filtros)
+    contexto = _contexto_comum(request, df, filtros, filtrado, "risco")
+    contexto["cartoes_risco"] = _preparar_cartoes_risco(filtrado, df, filtros)
+    contexto["tabela_ups"] = _preparar_tabela_ups(filtrado)
+    contexto["mensagem_sem_registros"] = (
+        "Sem registros para os filtros escolhidos" if filtrado.empty else ""
+    )
+
+    if filtrado.empty:
+        contexto["graficos_risco"] = {}
+        contexto["mensagem_mapa"] = (
+            "Sem acidentes graves para os filtros escolhidos"
+        )
+    else:
+        dados_risco = _adicionar_ups(filtrado)
+        mapa = _grafico_mapa_risco(dados_risco, filtros)
+        grafico_causas = _grafico_risco_causas(filtrado, filtros)
+        grafico_tipos = _grafico_risco_barras(filtrado, "tipo_acidente")
+        grafico_clima = _grafico_risco_barras(
+            filtrado, "condicao_metereologica"
+        )
+        grafico_fase = _grafico_risco_barras(filtrado, "fase_dia")
+        contexto["graficos_risco"] = {
+            "causas": _figura_div(grafico_causas)
+            if grafico_causas is not None
+            else None,
+            "tipos": _figura_div(grafico_tipos) if grafico_tipos is not None else None,
+            "horas": _figura_div(_grafico_risco_horas(filtrado)),
+            "clima": _figura_div(grafico_clima) if grafico_clima is not None else None,
+            "fase": _figura_div(grafico_fase) if grafico_fase is not None else None,
+            "mapa": _figura_div(mapa) if mapa is not None else None,
+        }
+        contexto["mensagem_mapa"] = (
+            "Sem acidentes graves para os filtros escolhidos"
+        )
+
+    return render(request, "painel/risco.html", contexto)
 
 
 def exportar_csv(request):

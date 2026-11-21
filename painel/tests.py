@@ -7,9 +7,17 @@ from .dados import calcular_kpi, limpar
 from .views import (
     CONFIG_GRAFICO_HOME,
     _figura_div,
+    _adicionar_ups,
+    _agrupar_fatias_pequenas,
+    _grafico_calor,
     _grafico_barras_indicador,
     _grafico_mapa,
+    _grafico_mapa_risco,
+    _letalidade,
+    _preparar_cartoes_risco,
     _preparar_cartoes_home,
+    _rotulo_br,
+    _rotulo_trecho,
 )
 
 
@@ -149,6 +157,42 @@ class CamadaDadosTests(SimpleTestCase):
             9,
         )
 
+    def test_mapa_risco_tem_altura_escala_centro_e_descarta_coordenadas_invalidas(self):
+        figura = _grafico_mapa_risco(
+            _adicionar_ups(self.dados),
+            {"uf": "TO"},
+        )
+
+        self.assertEqual(figura.layout.height, 520)
+        self.assertTrue(figura.layout.autosize)
+        self.assertEqual(figura.layout.margin.l, 0)
+        self.assertEqual(figura.layout.margin.r, 0)
+        self.assertEqual(figura.layout.margin.t, 0)
+        self.assertEqual(figura.layout.margin.b, 0)
+        self.assertEqual(figura.layout.map.style, "carto-positron")
+        self.assertEqual(figura.layout.map.zoom, 6)
+        self.assertAlmostEqual(
+            figura.layout.map.center.lat,
+            self.dados["latitude"].mean(),
+        )
+        self.assertAlmostEqual(
+            figura.layout.map.center.lon,
+            self.dados["longitude"].mean(),
+        )
+        self.assertEqual(figura.data[0].radius, 12)
+        self.assertEqual(figura.data[0].opacity, 0.8)
+        self.assertEqual(
+            figura.layout.coloraxis.colorbar.title.text,
+            "Severidade (UPS)",
+        )
+        self.assertEqual(figura.layout.coloraxis.colorbar.thickness, 12)
+        self.assertEqual(figura.layout.coloraxis.colorbar.len, 0.6)
+
+        sem_coordenadas = _adicionar_ups(
+            self.dados.assign(latitude=["inválida", ""], longitude=["", "inválida"])
+        )
+        self.assertIsNone(_grafico_mapa_risco(sem_coordenadas, {}))
+
     def test_cartoes_comparam_ultimo_mes_com_o_anterior(self):
         cartoes = {
             cartao["chave"]: cartao
@@ -210,6 +254,63 @@ class CamadaDadosTests(SimpleTestCase):
 
         self.assertIn('"displayModeBar": false', div)
 
+    def test_letalidade_ups_e_comparacoes_respeitam_o_recorte(self):
+        self.assertEqual(_letalidade(self.dados), 50.0)
+
+        com_nao_informado = pd.concat(
+            [
+                self.dados,
+                self.dados.iloc[[1]].assign(
+                    classificacao_acidente="NÃO INFORMADO"
+                ),
+            ],
+            ignore_index=True,
+        )
+        self.assertEqual(
+            _adicionar_ups(com_nao_informado)["ups"].tolist(),
+            [13, 5, 1],
+        )
+
+        filtros = {
+            "uf": "TO",
+            "br": "",
+            "municipio": "",
+            "mes_ini": "",
+            "mes_fim": "",
+            "causa": "",
+            "tipo": "",
+            "classificacao": "",
+            "fase": "",
+            "clima": "",
+        }
+        cartoes = _preparar_cartoes_risco(
+            self.dados.iloc[[0]],
+            self.dados,
+            filtros,
+        )
+        comparacao = cartoes[3]["comparacoes"]
+        self.assertEqual(comparacao[0]["valor"], "100,00%")
+        self.assertEqual(comparacao[1]["valor"], "—")
+        self.assertEqual(comparacao[2]["valor"], "50,00%")
+
+    def test_fatias_pequenas_heatmap_e_rotulos_de_br(self):
+        contagens = pd.Series(
+            {"Principal": 90, "Secundaria": 8, "Residual": 2}
+        )
+        agrupadas = _agrupar_fatias_pequenas(contagens)
+        self.assertEqual(agrupadas["Outros"], 2)
+        self.assertNotIn("Residual", agrupadas.index)
+
+        brasil = _grafico_calor(self.dados, {})
+        uf = _grafico_calor(self.dados, {"uf": "TO"})
+        self.assertIsNone(brasil.data[0].texttemplate)
+        self.assertEqual(uf.data[0].texttemplate, "%{z}")
+        self.assertEqual(_rotulo_br(0), "Não informada")
+        self.assertEqual(
+            _rotulo_trecho("BR-0 km 10-20"),
+            "Não informada km 10-20",
+        )
+
 
 class RotasPainelTests(SimpleTestCase):
     def setUp(self):
@@ -217,6 +318,12 @@ class RotasPainelTests(SimpleTestCase):
 
     def test_paginas_principais_respondem_com_sucesso(self):
         for caminho in ("/", "/painel/", "/indicador/mortos/"):
+            with self.subTest(caminho=caminho):
+                resposta = self.client.get(caminho)
+                self.assertEqual(resposta.status_code, 200)
+
+    def test_pagina_analise_de_risco_responde_com_e_sem_filtro_uf(self):
+        for caminho in ("/risco/", "/risco/?uf=PB"):
             with self.subTest(caminho=caminho):
                 resposta = self.client.get(caminho)
                 self.assertEqual(resposta.status_code, 200)
