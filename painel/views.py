@@ -1,13 +1,28 @@
-import json
+from io import StringIO
 
 import pandas as pd
 import plotly.express as px
-import plotly.graph_objects as go
-from django.http import HttpResponseBadRequest
+from django.http import HttpResponse
 from django.shortcuts import render
+from plotly.offline import get_plotlyjs, plot
 
-from .dados import INDICADORES, calcular_kpi, carregar_dados
+from .dados import INDICADORES, MESES_NOME, calcular_kpi, carregar_dados
 
+
+CORES_PMPB = {
+    "vermelho": "#C8102E",
+    "vermelho_escuro": "#7A0C14",
+    "preto": "#1C1C1C",
+    "dourado": "#C9A227",
+    "cinza": "#78716C",
+}
+
+CORES_CLASSIFICACAO = {
+    "Com Vítimas Fatais": CORES_PMPB["vermelho_escuro"],
+    "Com Vítimas Feridas": CORES_PMPB["dourado"],
+    "Sem Vítimas": CORES_PMPB["cinza"],
+    "NÃO INFORMADO": CORES_PMPB["preto"],
+}
 
 DIAS_SEMANA = [
     "segunda-feira",
@@ -18,424 +33,506 @@ DIAS_SEMANA = [
     "sábado",
     "domingo",
 ]
-MESES = [
-    "janeiro",
-    "fevereiro",
-    "março",
-    "abril",
-    "maio",
-    "junho",
-    "julho",
-    "agosto",
-    "setembro",
-    "outubro",
-    "novembro",
-    "dezembro",
-]
-CORES = ["#173b57", "#08a88a", "#f2a541", "#e36a63", "#6c79c8", "#50a3c2"]
+
+FILTROS_PARA_COLUNAS = {
+    "causa": "causa_acidente",
+    "tipo": "tipo_acidente",
+    "classificacao": "classificacao_acidente",
+    "fase": "fase_dia",
+    "clima": "condicao_metereologica",
+}
+
+
+def _valores_texto(df, coluna):
+    return sorted(df[coluna].dropna().astype(str).unique().tolist(), key=str.casefold)
+
+
+def _brs(df):
+    return [str(int(valor)) for valor in sorted(df["br"].dropna().unique())]
+
+
+def _periodos(df):
+    datas = df["data"].dropna()
+    return sorted(datas.dt.strftime("%Y-%m").unique().tolist())
+
+
+def _opcoes_dependentes(df):
+    ufs = _valores_texto(df, "uf")
+    brs_por_uf = {"": _brs(df)}
+    municipios_por_uf = {"": _valores_texto(df, "municipio")}
+
+    for uf in ufs:
+        dados_uf = df.loc[df["uf"].astype(str) == uf]
+        brs_por_uf[uf] = _brs(dados_uf)
+        municipios_por_uf[uf] = _valores_texto(dados_uf, "municipio")
+
+    return ufs, brs_por_uf, municipios_por_uf
+
+
+def ler_filtros(request):
+    """Lê os filtros da URL e descarta valores que não existem na base."""
+    df = carregar_dados()
+    ufs, brs_por_uf, municipios_por_uf = _opcoes_dependentes(df)
+    periodos = _periodos(df)
+    filtros = {
+        nome: request.GET.get(nome, "").strip()
+        for nome in (
+            "uf",
+            "br",
+            "municipio",
+            "mes_ini",
+            "mes_fim",
+            "causa",
+            "tipo",
+            "classificacao",
+            "fase",
+            "clima",
+        )
+    }
+
+    # Cada filtro textual só é mantido se corresponder a uma opção real.
+    if filtros["uf"] not in ufs:
+        filtros["uf"] = ""
+
+    # BR e município dependem da UF válida; sem UF, a lista inclui todos.
+    chave_uf = filtros["uf"]
+    if filtros["br"] not in brs_por_uf[chave_uf]:
+        filtros["br"] = ""
+    if filtros["municipio"] not in municipios_por_uf[chave_uf]:
+        filtros["municipio"] = ""
+
+    # Os meses usam o formato ano-mês para ordenar corretamente entre anos.
+    for nome in ("mes_ini", "mes_fim"):
+        if filtros[nome] not in periodos:
+            filtros[nome] = ""
+    if filtros["mes_ini"] and filtros["mes_fim"] and filtros["mes_ini"] > filtros["mes_fim"]:
+        filtros["mes_ini"] = ""
+        filtros["mes_fim"] = ""
+
+    for nome, coluna in FILTROS_PARA_COLUNAS.items():
+        if filtros[nome] not in _valores_texto(df, coluna):
+            filtros[nome] = ""
+
+    return filtros
+
+
+def aplicar_filtros(df, filtros):
+    """Retorna uma cópia com todos os filtros válidos aplicados."""
+    mascara = pd.Series(True, index=df.index)
+
+    for nome, coluna in (
+        ("uf", "uf"),
+        ("municipio", "municipio"),
+        ("causa", "causa_acidente"),
+        ("tipo", "tipo_acidente"),
+        ("classificacao", "classificacao_acidente"),
+        ("fase", "fase_dia"),
+        ("clima", "condicao_metereologica"),
+    ):
+        valor = filtros.get(nome, "")
+        if valor:
+            mascara &= df[coluna].astype("string") == valor
+
+    if filtros.get("br"):
+        mascara &= df["br"].astype("string") == filtros["br"]
+
+    periodo = df["data"].dt.strftime("%Y-%m").fillna("")
+    if filtros.get("mes_ini"):
+        mascara &= periodo >= filtros["mes_ini"]
+    if filtros.get("mes_fim"):
+        mascara &= periodo <= filtros["mes_fim"]
+
+    return df.loc[mascara].copy()
 
 
 def _formatar_inteiro(valor):
     return f"{int(valor):,}".replace(",", ".")
 
 
-def _rotulo_mes(mes):
-    ano, numero = mes.split("-")
-    return f"{MESES[int(numero) - 1][:3].capitalize()}/{ano}"
+def _rotulo_periodo(periodo):
+    ano, numero_mes = periodo.split("-")
+    return f"{MESES_NOME[int(numero_mes)]}/{ano}"
 
 
-def _validar_opcao(valor, opcoes, nome):
-    if valor and valor not in opcoes:
-        return HttpResponseBadRequest(f"Valor inválido para o filtro {nome}.")
-    return None
-
-
-def _configurar_figura(figura, altura=370):
+def _aplicar_tema(figura):
     figura.update_layout(
         template="plotly_white",
-        height=altura,
-        margin={"l": 18, "r": 18, "t": 28, "b": 24},
-        font={"family": "Inter, Arial, sans-serif", "color": "#253746", "size": 12},
+        font={"family": "Inter, sans-serif", "color": CORES_PMPB["preto"]},
+        colorway=[
+            CORES_PMPB["vermelho"],
+            CORES_PMPB["vermelho_escuro"],
+            CORES_PMPB["dourado"],
+            CORES_PMPB["cinza"],
+            CORES_PMPB["preto"],
+        ],
+        separators=",.",
         paper_bgcolor="white",
         plot_bgcolor="white",
-        colorway=CORES,
-        hoverlabel={"bgcolor": "#173b57", "font_color": "white"},
+        margin={"l": 24, "r": 24, "t": 55, "b": 35},
     )
-    figura.update_xaxes(showgrid=True, gridcolor="#edf1f4", zeroline=False)
-    figura.update_yaxes(showgrid=False, zeroline=False)
     return figura
 
 
-def _grafico_mensal(df, meses):
-    # O período inclui ano e mês para que anos diferentes não sejam combinados.
-    dados = df.assign(periodo_mes=df["data"].dt.strftime("%Y-%m"))
-    agrupado = (
-        dados.groupby("periodo_mes")
-        .agg(acidentes=("id", "count"), mortos=("mortos", "sum"))
-        .reindex(meses, fill_value=0)
+def _figura_div(figura):
+    return plot(
+        figura,
+        output_type="div",
+        include_plotlyjs=False,
+        config={"displaylogo": False},
     )
-    rotulos = [_rotulo_mes(mes) for mes in meses]
-    figura = go.Figure()
-    figura.add_trace(
-        go.Scatter(
-            x=rotulos,
-            y=agrupado["acidentes"],
-            name="Acidentes",
-            mode="lines+markers",
-            line={"color": CORES[0], "width": 3},
-            marker={"size": 7},
-        )
+
+
+def _grafico_mensal(df, periodos):
+    mensal = (
+        df.assign(periodo=df["data"].dt.strftime("%Y-%m"))
+        .groupby("periodo")
+        .agg(acidentes=("id", "size"), mortos=("mortos", "sum"))
+        .reindex(periodos, fill_value=0)
+        .rename_axis("periodo")
+        .reset_index()
     )
-    figura.add_trace(
-        go.Scatter(
-            x=rotulos,
-            y=agrupado["mortos"],
-            name="Mortos",
-            mode="lines+markers",
-            yaxis="y2",
-            line={"color": CORES[3], "width": 3},
-            marker={"size": 7},
-        )
+    longo = mensal.melt(
+        id_vars="periodo",
+        value_vars=["acidentes", "mortos"],
+        var_name="indicador",
+        value_name="valor",
+    )
+    longo["indicador"] = longo["indicador"].map(
+        {"acidentes": "Acidentes", "mortos": "Mortos"}
+    )
+    longo["mes"] = longo["periodo"].map(_rotulo_periodo)
+    rotulos = [_rotulo_periodo(periodo) for periodo in periodos]
+
+    figura = px.line(
+        longo,
+        x="mes",
+        y="valor",
+        color="indicador",
+        facet_col="indicador",
+        facet_col_wrap=1,
+        markers=True,
+        category_orders={
+            "indicador": ["Acidentes", "Mortos"],
+            "mes": rotulos,
+        },
+        color_discrete_map={
+            "Acidentes": CORES_PMPB["vermelho"],
+            "Mortos": CORES_PMPB["vermelho_escuro"],
+        },
+        title="Evolução mensal de acidentes e mortos",
+        template="plotly_white",
+    )
+    figura.update_yaxes(matches=None, rangemode="tozero", title_text="")
+    figura.update_xaxes(title_text="", tickangle=-25)
+    figura.for_each_annotation(
+        lambda anotacao: anotacao.update(text=anotacao.text.split("=")[-1])
+    )
+    figura.update_layout(showlegend=False, height=610)
+    return _aplicar_tema(figura)
+
+
+def _figura_barras(contagens, titulo, cor):
+    contagens = (
+        contagens.sort_values(ascending=True)
+        .rename_axis("categoria")
+        .reset_index(name="acidentes")
+    )
+    figura = px.bar(
+        contagens,
+        x="acidentes",
+        y="categoria",
+        orientation="h",
+        text="acidentes",
+        title=titulo,
+        color_discrete_sequence=[cor or CORES_PMPB["vermelho"]],
+        template="plotly_white",
+    )
+    figura.update_traces(
+        texttemplate="%{x:,.0f}",
+        textposition="inside",
+        textfont_color="white",
+        cliponaxis=False,
     )
     figura.update_layout(
-        title="Acidentes e mortos por mês",
-        xaxis_title="Mês",
-        yaxis={"title": "Acidentes", "rangemode": "tozero"},
-        yaxis2={
-            "title": "Mortos",
-            "overlaying": "y",
-            "side": "right",
-            "rangemode": "tozero",
-            "showgrid": False,
-        },
-        legend={"orientation": "h", "y": 1.12, "x": 1, "xanchor": "right"},
+        xaxis_title="Acidentes",
+        yaxis_title="",
+        margin={"l": 24, "r": 25, "t": 55, "b": 30},
     )
-    return _configurar_figura(figura, altura=390)
+    return _aplicar_tema(figura)
 
 
-def _grafico_barras(series, titulo, titulo_x):
-    ordenada = series.sort_values(ascending=True)
-    figura = go.Figure(
-        go.Bar(
-            x=ordenada.values,
-            y=ordenada.index.astype(str),
-            orientation="h",
-            marker_color=CORES[0],
-            hovertemplate="%{y}<br>Acidentes: %{x:,}<extra></extra>",
-        )
+def _grafico_barras(df, coluna, titulo, limite=None, cor=None):
+    contagens = df[coluna].value_counts()
+    if limite is not None:
+        contagens = contagens.head(limite)
+    return _figura_barras(
+        contagens,
+        titulo,
+        cor or CORES_PMPB["vermelho"],
     )
-    figura.update_layout(title=titulo, xaxis_title=titulo_x, yaxis_title="")
-    return _configurar_figura(figura, altura=max(350, min(620, 48 * len(ordenada) + 100)))
+
+
+def _grafico_calor(df):
+    tabela = (
+        df.groupby(["dia_semana", "hora"])
+        .size()
+        .unstack(fill_value=0)
+        .reindex(index=DIAS_SEMANA, columns=range(24), fill_value=0)
+    )
+    figura = px.imshow(
+        tabela,
+        x=[f"{hora:02d}" for hora in range(24)],
+        y=DIAS_SEMANA,
+        aspect="auto",
+        text_auto=True,
+        labels={"x": "Hora do dia", "y": "Dia da semana", "color": "Acidentes"},
+        color_continuous_scale=[
+            [0, "#F5F5F4"],
+            [0.5, CORES_PMPB["dourado"]],
+            [1, CORES_PMPB["vermelho"]],
+        ],
+        title="Acidentes por dia da semana e hora",
+        template="plotly_white",
+    )
+    figura.update_xaxes(title_text="Hora do dia")
+    figura.update_yaxes(title_text="Dia da semana")
+    return _aplicar_tema(figura)
 
 
 def _grafico_rosca(df, coluna, titulo):
     contagens = (
         df[coluna]
-        .fillna("Não informado")
-        .astype(str)
         .value_counts()
-        .sort_values(ascending=False)
+        .rename_axis("categoria")
+        .reset_index(name="acidentes")
     )
-    figura = go.Figure(
-        go.Pie(
-            labels=contagens.index,
-            values=contagens.values,
-            hole=0.62,
-            sort=False,
-            marker={"colors": CORES},
-            textinfo="percent",
-            hovertemplate="%{label}<br>Acidentes: %{value:,}<br>%{percent}<extra></extra>",
-        )
+    figura = px.pie(
+        contagens,
+        names="categoria",
+        values="acidentes",
+        hole=0.58,
+        title=titulo,
+        color_discrete_sequence=[
+            CORES_PMPB["vermelho"],
+            CORES_PMPB["vermelho_escuro"],
+            CORES_PMPB["dourado"],
+            CORES_PMPB["cinza"],
+            CORES_PMPB["preto"],
+        ],
+        template="plotly_white",
     )
-    figura.update_layout(title=titulo, showlegend=True, legend={"orientation": "h", "y": -0.12})
-    return _configurar_figura(figura, altura=355)
-
-
-def _preparar_tabelas(df):
-    # A camada de dados já fornece o rótulo BR + faixa de 10 km.
-    trechos = df.loc[df["trecho"] != "NÃO INFORMADO"]
-    if not trechos.empty:
-        resumo_trechos = (
-            trechos.groupby("trecho", as_index=False)
-            .agg(
-                acidentes=("id", "count"),
-                mortos=("mortos", "sum"),
-                feridos_graves=("feridos_graves", "sum"),
-            )
-            .sort_values(
-                ["acidentes", "mortos", "trecho"],
-                ascending=[False, False, True],
-            )
-            .head(10)
-        )
-        tabela_trechos = [
-            {
-                "trecho": linha.trecho,
-                "acidentes": _formatar_inteiro(linha.acidentes),
-                "mortos": _formatar_inteiro(linha.mortos),
-                "feridos_graves": _formatar_inteiro(linha.feridos_graves),
-            }
-            for linha in resumo_trechos.itertuples(index=False)
-        ]
-    else:
-        tabela_trechos = []
-
-    resumo_municipios = (
-        df.groupby(["municipio", "uf"], dropna=False, as_index=False)
-        .agg(
-            acidentes=("id", "count"),
-            mortos=("mortos", "sum"),
-            feridos_graves=("feridos_graves", "sum"),
-        )
-        .sort_values(
-            ["acidentes", "mortos", "municipio", "uf"],
-            ascending=[False, False, True, True],
-            na_position="last",
-        )
-        .head(10)
+    figura.update_traces(
+        textposition="inside",
+        textinfo="percent+label",
+        hovertemplate="%{label}<br>Acidentes: %{value:,.0f}<extra></extra>",
     )
-    tabela_municipios = [
-        {
-            "municipio": (
-                f"{'Não informado' if pd.isna(linha.municipio) else linha.municipio} / "
-                f"{'UF não informada' if pd.isna(linha.uf) else linha.uf}"
-            ),
-            "acidentes": _formatar_inteiro(linha.acidentes),
-            "mortos": _formatar_inteiro(linha.mortos),
-            "feridos_graves": _formatar_inteiro(linha.feridos_graves),
-        }
-        for linha in resumo_municipios.itertuples(index=False)
-    ]
-    return tabela_trechos, tabela_municipios
+    return _aplicar_tema(figura)
 
 
-def dashboard(request):
-    df = carregar_dados()
-    periodo_mes = df["data"].dt.strftime("%Y-%m")
-    meses = sorted(periodo_mes.dropna().unique().tolist())
-    if not meses:
-        raise ValueError("O arquivo não contém datas válidas para montar o painel.")
+def _grafico_mapa(df):
+    pontos = df.dropna(subset=["latitude", "longitude"])
+    titulo = "Localização dos acidentes"
+    if len(pontos) > 5000:
+        pontos = pontos.sample(n=5000, random_state=1)
+        titulo += " — amostra de 5.000 pontos"
+    if pontos.empty:
+        return None
 
-    ufs = sorted(df["uf"].dropna().astype(str).unique().tolist())
-    uf = request.GET.get("uf", "")
-    resposta = _validar_opcao(uf, ufs, "UF")
-    if resposta:
-        return resposta
-
-    df_uf = df if not uf else df.loc[df["uf"].astype(str) == uf]
-    brs = [
-        str(valor)
-        for valor in sorted({int(valor) for valor in df_uf["br"].dropna().unique()})
-    ]
-    municipios = sorted(df_uf["municipio"].dropna().astype(str).unique().tolist())
-    causas = sorted(df["causa_acidente"].dropna().astype(str).unique().tolist())
-    tipos = sorted(df["tipo_acidente"].dropna().astype(str).unique().tolist())
-    classificacoes = sorted(
-        df["classificacao_acidente"].dropna().astype(str).unique().tolist()
-    )
-    fases = sorted(df["fase_dia"].dropna().astype(str).unique().tolist())
-    condicoes = sorted(
-        df["condicao_metereologica"].dropna().astype(str).unique().tolist()
-    )
-
-    filtros = {
-        "uf": uf,
-        "br": request.GET.get("br", ""),
-        "municipio": request.GET.get("municipio", ""),
-        "mes_inicio": request.GET.get("mes_inicio", meses[0]),
-        "mes_fim": request.GET.get("mes_fim", meses[-1]),
-        "causa_acidente": request.GET.get("causa_acidente", ""),
-        "tipo_acidente": request.GET.get("tipo_acidente", ""),
-        "classificacao_acidente": request.GET.get("classificacao_acidente", ""),
-        "fase_dia": request.GET.get("fase_dia", ""),
-        "condicao_metereologica": request.GET.get("condicao_metereologica", ""),
-    }
-
-    opcoes = [
-        (filtros["br"], brs, "BR"),
-        (filtros["municipio"], municipios, "município"),
-        (filtros["mes_inicio"], meses, "mês inicial"),
-        (filtros["mes_fim"], meses, "mês final"),
-        (filtros["causa_acidente"], causas, "causa"),
-        (filtros["tipo_acidente"], tipos, "tipo de acidente"),
-        (filtros["classificacao_acidente"], classificacoes, "classificação"),
-        (filtros["fase_dia"], fases, "fase do dia"),
-        (filtros["condicao_metereologica"], condicoes, "condição meteorológica"),
-    ]
-    for valor, disponiveis, nome in opcoes:
-        resposta = _validar_opcao(valor, disponiveis, nome)
-        if resposta:
-            return resposta
-
-    if filtros["mes_inicio"] > filtros["mes_fim"]:
-        return HttpResponseBadRequest("O mês inicial deve ser anterior ou igual ao mês final.")
-
-    mascara = periodo_mes.between(filtros["mes_inicio"], filtros["mes_fim"])
-    for coluna, filtro in (
-        ("uf", filtros["uf"]),
-        ("municipio", filtros["municipio"]),
-        ("causa_acidente", filtros["causa_acidente"]),
-        ("tipo_acidente", filtros["tipo_acidente"]),
-        ("classificacao_acidente", filtros["classificacao_acidente"]),
-        ("fase_dia", filtros["fase_dia"]),
-        ("condicao_metereologica", filtros["condicao_metereologica"]),
-    ):
-        if filtro:
-            mascara &= df[coluna].astype("string") == filtro
-    if filtros["br"]:
-        mascara &= df["br"] == int(filtros["br"])
-    filtrado = df.loc[mascara].copy()
-
-    # Os cartões usam a definição centralizada dos indicadores da camada de dados.
-    kpis = []
-    for chave in (
-        "acidentes",
-        "mortos",
-        "feridos_graves",
-        "feridos_leves",
-        "veiculos",
-        "gravidade",
-    ):
-        indicador = INDICADORES[chave]
-        valor = calcular_kpi(filtrado, chave)
-        if indicador["tipo"] == "razao":
-            valor_formatado = f"{valor:.2f}".replace(".", ",")
-            unidade = "mortos por 100 acidentes"
-        else:
-            valor_formatado = _formatar_inteiro(valor)
-            unidade = ""
-        kpis.append(
-            {
-                "rotulo": indicador["nome"],
-                "valor": valor_formatado,
-                "unidade": unidade,
-            }
-        )
-    acidentes = calcular_kpi(filtrado, "acidentes")
-
-    meses_no_periodo = [
-        mes for mes in meses if filtros["mes_inicio"] <= mes <= filtros["mes_fim"]
-    ]
-    series_causas = (
-        filtrado["causa_acidente"].dropna().value_counts().head(10).sort_values()
-    )
-    series_tipos = filtrado["tipo_acidente"].dropna().value_counts().sort_values()
-
-    if filtros["uf"]:
-        serie_ranking = (
-            filtrado["br"].dropna().astype(int).astype(str).value_counts().sort_values()
-        )
-        serie_ranking.index = [f"BR-{valor}" for valor in serie_ranking.index]
-        titulo_ranking = f"Ranking de acidentes por BR · {filtros['uf']}"
-        eixo_ranking = "Acidentes"
-    else:
-        serie_ranking = filtrado["uf"].dropna().value_counts().sort_values()
-        titulo_ranking = "Ranking de acidentes por UF"
-        eixo_ranking = "Acidentes"
-
-    contagem_horas = (
-        filtrado.groupby(["dia_semana", "hora"])
-        .size()
-        .unstack(fill_value=0)
-        .reindex(index=DIAS_SEMANA, columns=range(24), fill_value=0)
-    )
-    heatmap = go.Figure(
-        go.Heatmap(
-            z=contagem_horas.values,
-            x=[f"{hora:02d}:00" for hora in range(24)],
-            y=DIAS_SEMANA,
-            colorscale="YlOrRd",
-            colorbar={"title": "Acidentes"},
-            hovertemplate="%{y}<br>%{x}<br>Acidentes: %{z}<extra></extra>",
-        )
-    )
-    heatmap.update_layout(
-        title="Acidentes por dia da semana e hora",
-        xaxis_title="Hora do dia",
-        yaxis_title="Dia da semana",
-    )
-    heatmap = _configurar_figura(heatmap, altura=390)
-
-    dados_mapa = filtrado.dropna(subset=["latitude", "longitude"])
-    mapa = px.scatter_map(
-        dados_mapa,
+    figura = px.scatter_map(
+        pontos,
         lat="latitude",
         lon="longitude",
-        color="mortos",
-        color_continuous_scale="YlOrRd",
+        color="classificacao_acidente",
+        color_discrete_map=CORES_CLASSIFICACAO,
         hover_name="municipio",
         hover_data={
+            "id": True,
             "uf": True,
             "br": True,
             "km": ":.1f",
-            "tipo_acidente": True,
             "mortos": True,
             "latitude": False,
             "longitude": False,
         },
+        map_style="open-street-map",
         center={"lat": -14.2, "lon": -51.9},
         zoom=3,
-        map_style="open-street-map",
-        opacity=0.65,
-        height=540,
-        title="Localização dos acidentes",
+        opacity=0.7,
+        title=titulo,
     )
-    mapa.update_traces(marker={"size": 7})
-    mapa.update_layout(margin={"l": 0, "r": 0, "t": 45, "b": 0})
+    figura.update_traces(marker={"size": 8})
+    figura.update_layout(height=600, margin={"l": 0, "r": 0, "t": 55, "b": 0})
+    return _aplicar_tema(figura)
 
-    figuras = [
-        ("grafico-mensal", _grafico_mensal(filtrado, meses_no_periodo)),
-        (
-            "grafico-causas",
-            _grafico_barras(series_causas, "10 principais causas", "Acidentes"),
+
+def _preparar_tabelas(df):
+    trechos = (
+        df.loc[df["trecho"] != "NÃO INFORMADO"]
+        .groupby("trecho")
+        .agg(acidentes=("id", "size"), mortos=("mortos", "sum"))
+        .sort_values(["acidentes", "mortos"], ascending=False)
+        .head(10)
+        .reset_index()
+    )
+    municipios = (
+        df.groupby(["municipio", "uf"])
+        .agg(acidentes=("id", "size"), mortos=("mortos", "sum"))
+        .sort_values(["acidentes", "mortos"], ascending=False)
+        .head(10)
+        .reset_index()
+    )
+
+    return (
+        [
+            {
+                "trecho": linha.trecho,
+                "acidentes": _formatar_inteiro(linha.acidentes),
+                "mortos": _formatar_inteiro(linha.mortos),
+            }
+            for linha in trechos.itertuples(index=False)
+        ],
+        [
+            {
+                "municipio": linha.municipio,
+                "uf": linha.uf,
+                "acidentes": _formatar_inteiro(linha.acidentes),
+                "mortos": _formatar_inteiro(linha.mortos),
+            }
+            for linha in municipios.itertuples(index=False)
+        ],
+    )
+
+
+def _gerar_graficos(df, periodos, filtros):
+    mapa = _grafico_mapa(df)
+    if filtros["uf"]:
+        contagens_ranking = df["br"].dropna().astype(int).value_counts()
+        contagens_ranking.index = [
+            f"BR-{valor}" for valor in contagens_ranking.index
+        ]
+        titulo_ranking = f"Ranking de acidentes por BR · {filtros['uf']}"
+    else:
+        contagens_ranking = df["uf"].value_counts()
+        titulo_ranking = "Ranking de acidentes por UF"
+
+    return {
+        "mensal": _figura_div(_grafico_mensal(df, periodos)),
+        "causas": _figura_div(
+            _grafico_barras(
+                df,
+                "causa_acidente",
+                "10 principais causas de acidentes",
+                limite=10,
+                cor=CORES_PMPB["vermelho"],
+            )
         ),
-        (
-            "grafico-tipos",
-            _grafico_barras(series_tipos, "Acidentes por tipo", "Acidentes"),
+        "tipos": _figura_div(
+            _grafico_barras(
+                df,
+                "tipo_acidente",
+                "Acidentes por tipo",
+                cor=CORES_PMPB["vermelho_escuro"],
+            )
         ),
-        (
-            "grafico-ranking",
-            _grafico_barras(serie_ranking, titulo_ranking, eixo_ranking),
+        "ranking": _figura_div(
+            _figura_barras(
+                contagens_ranking,
+                titulo_ranking,
+                CORES_PMPB["vermelho_escuro"],
+            )
         ),
-        ("grafico-calor", heatmap),
-        (
-            "grafico-fase",
-            _grafico_rosca(filtrado, "fase_dia", "Acidentes por fase do dia"),
-        ),
-        (
-            "grafico-condicao",
+        "calor": _figura_div(_grafico_calor(df)),
+        "fase": _figura_div(_grafico_rosca(df, "fase_dia", "Acidentes por fase do dia")),
+        "clima": _figura_div(
             _grafico_rosca(
-                filtrado,
+                df,
                 "condicao_metereologica",
                 "Acidentes por condição meteorológica",
-            ),
+            )
         ),
-        ("grafico-mapa", mapa),
-    ]
-    graficos = [
-        {"id": identificador, "figura": json.loads(figura.to_json())}
-        for identificador, figura in figuras
-    ]
-    tabela_trechos, tabela_municipios = _preparar_tabelas(filtrado)
+        "mapa": _figura_div(mapa) if mapa is not None else None,
+    }
 
+
+def painel(request):
+    df = carregar_dados()
+    filtros = ler_filtros(request)
+    filtrado = aplicar_filtros(df, filtros)
+    todos_periodos = _periodos(df)
+    periodos_grafico = [
+        periodo
+        for periodo in todos_periodos
+        if (not filtros["mes_ini"] or periodo >= filtros["mes_ini"])
+        and (not filtros["mes_fim"] or periodo <= filtros["mes_fim"])
+    ]
+
+    kpis = []
+    for chave, indicador in INDICADORES.items():
+        valor = calcular_kpi(filtrado, chave)
+        if indicador["tipo"] == "razao":
+            valor_formatado = f"{valor:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+        else:
+            valor_formatado = _formatar_inteiro(valor)
+        kpis.append(
+            {
+                "nome": indicador["nome"],
+                "descricao": indicador["descricao"],
+                "valor": valor_formatado,
+            }
+        )
+
+    if filtrado.empty:
+        graficos = {}
+        mensagem_sem_registros = "Sem registros para os filtros escolhidos"
+        tabela_trechos, tabela_municipios = [], []
+    else:
+        graficos = _gerar_graficos(filtrado, periodos_grafico, filtros)
+        mensagem_sem_registros = ""
+        tabela_trechos, tabela_municipios = _preparar_tabelas(filtrado)
+
+    ufs, brs_por_uf, municipios_por_uf = _opcoes_dependentes(df)
+    chave_uf = filtros["uf"]
     return render(
         request,
-        "painel/dashboard.html",
+        "painel/painel.html",
         {
-            "kpis": kpis,
-            "graficos": graficos,
             "filtros": filtros,
-            "ufs": ufs,
-            "brs": brs,
-            "municipios": municipios,
-            "meses": [{"valor": mes, "rotulo": _rotulo_mes(mes)} for mes in meses],
-            "causas": causas,
-            "tipos": tipos,
-            "classificacoes": classificacoes,
-            "fases": fases,
-            "condicoes": condicoes,
+            "querystring": request.GET.urlencode(),
+            "graficos": graficos,
+            "mensagem_sem_registros": mensagem_sem_registros,
+            "kpis": kpis,
             "tabela_trechos": tabela_trechos,
             "tabela_municipios": tabela_municipios,
-            "total_filtrado": _formatar_inteiro(acidentes),
+            "ufs": ufs,
+            "brs": brs_por_uf[chave_uf],
+            "municipios": municipios_por_uf[chave_uf],
+            "brs_por_uf": brs_por_uf,
+            "municipios_por_uf": municipios_por_uf,
+            "meses": [
+                {"valor": periodo, "rotulo": _rotulo_periodo(periodo)}
+                for periodo in todos_periodos
+            ],
+            "causas": _valores_texto(df, "causa_acidente"),
+            "tipos": _valores_texto(df, "tipo_acidente"),
+            "classificacoes": _valores_texto(df, "classificacao_acidente"),
+            "fases": _valores_texto(df, "fase_dia"),
+            "climas": _valores_texto(df, "condicao_metereologica"),
+            "total_filtrado": _formatar_inteiro(len(filtrado)),
         },
     )
+
+
+def exportar_csv(request):
+    df = aplicar_filtros(carregar_dados(), ler_filtros(request))
+    arquivo = StringIO()
+    df.to_csv(arquivo, index=False, sep=";", decimal=",")
+    resposta = HttpResponse(
+        "\ufeff" + arquivo.getvalue(),
+        content_type="text/csv; charset=utf-8",
+    )
+    resposta["Content-Disposition"] = 'attachment; filename="acidentes_filtrados.csv"'
+    return resposta
+
+
+def plotly_js(request):
+    return HttpResponse(get_plotlyjs(), content_type="application/javascript")
