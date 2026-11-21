@@ -86,143 +86,139 @@
         </aside>
         <div class="min-w-0 flex-1">
             <header class="border-b-4 border-[#C9A227] bg-gradient-to-r from-[#1C1C1C] to-[#7A0C14] text-white shadow-lg">
-                <div class="mx-auto flex max-w-screen-2xl flex-wrap items-center justify-between gap-5 px-4 py-5 sm:px-6 lg:px-8">
-                    <div class="flex min-w-0 items-center gap-4">
-                        <img class="h-14 w-14 shrink-0 rounded-full bg-white object-contain p-1" src="{% static 'painel/brasao.png' %}" alt="Brasão APMCB">
-                        <div class="min-w-0">
-                            <p class="text-[0.65rem] font-bold uppercase tracking-widest text-[#C9A227] sm:text-xs">POLÍCIA MILITAR DA PARAÍBA · APMCB</p>
-                            <h1 class="mt-1 text-lg font-extrabold leading-tight sm:text-2xl">Painel de Acidentes nas Rodovias Federais - 2026</h1>
-                            <p class="mt-1 text-xs text-stone-200 sm:text-sm">Fonte: PRF - Dados Abertos (jan a set/2026)</p>
+                <div class="mx-auto flex max-w-screen-2xl flex-wrap items-center justify-between gap-x-6 gap-y-2 px-4 py-4 sm:px-6 lg:px-8">
+                    <div class="min-w-0">
+                        <p class="text-[0.65rem] font-bold uppercase tracking-widest text-[#C9A227] sm:text-xs">POLÍCIA MILITAR DA PARAÍBA · APMCB</p>
+                        <div class="flex flex-wrap items-baseline gap-x-3">
+                            <h1 class="text-lg font-extrabold leading-tight sm:text-xl">Painel de Acidentes nas Rodovias Federais - 2026</h1>
+                            <p class="text-xs text-stone-200">Fonte: PRF - Dados Abertos (jan a set/2026)</p>
                         </div>
                     </div>
-                    <aside class="min-w-56 rounded-lg border border-white/20 bg-black/10 px-4 py-3 text-sm sm:text-right" aria-label="Recorte atual">
-                        <p class="mb-1 text-xs font-bold uppercase tracking-widest text-[#C9A227]">Recorte atual</p>
-                        <p><span class="text-stone-300">UF:</span> {{ recorte.uf }} <span class="mx-1 text-white/40">·</span> <span class="text-stone-300">BR:</span> {{ recorte.br }}</p>
-                        <p class="truncate"><span class="text-stone-300">Município:</span> {{ recorte.municipio }}</p>
-                        <p><span class="text-stone-300">Período:</span> {{ recorte.periodo }}</p>
-                    </aside>
+                    <p class="whitespace-nowrap text-xs text-stone-200">
+                        {% if filtros.uf %}{{ recorte.uf }}{% else %}Brasil{% endif %}
+                        {% if filtros.br %} · {{ recorte.br }}{% endif %}
+                        {% if filtros.municipio %} · {{ recorte.municipio }}{% endif %}
+                        · {% if filtros.mes_ini or filtros.mes_fim %}{{ recorte.periodo }}{% else %}Jan–Set/2026{% endif %}
+                    </p>
                 </div>
             </header>
 
             <main class="mx-auto max-w-screen-2xl px-4 py-6 sm:px-6 lg:px-8">
-        <section class="mb-6 rounded-xl border border-stone-200 border-t-[3px] border-t-[#1C1C1C] bg-white p-5 shadow-sm" aria-labelledby="filtros-titulo">
-            <div class="mb-4 flex flex-wrap items-end justify-between gap-3">
-                <div>
-                    <p class="text-xs font-bold uppercase tracking-[0.16em] text-[#78716C]">Explore os dados</p>
-                    <h2 id="filtros-titulo" class="mt-1 text-lg font-bold text-[#1C1C1C]">Filtros</h2>
-                </div>
-                <p class="text-sm text-[#78716C]">{{ total_filtrado }} acidentes</p>
-            </div>
-
-            <form method="get" action="{{ request.path }}" id="filtros-form">
-                <div class="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-5">
-                    <label class="text-xs font-semibold text-[#78716C]">
-                        UF
-                        <select name="uf" id="filtro-uf" class="mt-1 w-full rounded-lg border border-stone-300 bg-white px-3 py-2.5 text-sm text-[#1C1C1C]">
-                            <option value="">Todas</option>
-                            {% for valor in ufs %}
-                                <option value="{{ valor }}" {% if filtros.uf == valor %}selected{% endif %}>{{ valor }}</option>
-                            {% endfor %}
-                        </select>
-                    </label>
-                    <label class="text-xs font-semibold text-[#78716C]">
-                        BR
-                        <select name="br" id="filtro-br" class="mt-1 w-full rounded-lg border border-stone-300 bg-white px-3 py-2.5 text-sm text-[#1C1C1C]">
-                            <option value="">Todas</option>
-                            {% for valor in brs %}
-                                <option value="{{ valor }}" {% if filtros.br == valor %}selected{% endif %}>BR-{{ valor }}</option>
-                            {% endfor %}
-                        </select>
-                    </label>
-                    <label class="text-xs font-semibold text-[#78716C]">
-                        Município
-                        <select name="municipio" id="filtro-municipio" class="mt-1 w-full rounded-lg border border-stone-300 bg-white px-3 py-2.5 text-sm text-[#1C1C1C]">
-                            <option value="">Todos</option>
-                            {% for valor in municipios %}
-                                <option value="{{ valor }}" {% if filtros.municipio == valor %}selected{% endif %}>{{ valor }}</option>
-                            {% endfor %}
-                        </select>
-                    </label>
-                    <label class="text-xs font-semibold text-[#78716C]">
-                        Mês inicial
-                        <select name="mes_ini" class="mt-1 w-full rounded-lg border border-stone-300 bg-white px-3 py-2.5 text-sm text-[#1C1C1C]">
-                            <option value="">Desde o início</option>
-                            {% for mes in meses %}
-                                <option value="{{ mes.valor }}" {% if filtros.mes_ini == mes.valor %}selected{% endif %}>{{ mes.rotulo }}</option>
-                            {% endfor %}
-                        </select>
-                    </label>
-                    <label class="text-xs font-semibold text-[#78716C]">
-                        Mês final
-                        <select name="mes_fim" class="mt-1 w-full rounded-lg border border-stone-300 bg-white px-3 py-2.5 text-sm text-[#1C1C1C]">
-                            <option value="">Até o fim</option>
-                            {% for mes in meses %}
-                                <option value="{{ mes.valor }}" {% if filtros.mes_fim == mes.valor %}selected{% endif %}>{{ mes.rotulo }}</option>
-                            {% endfor %}
-                        </select>
-                    </label>
-                    <label class="text-xs font-semibold text-[#78716C]">
-                        Causa
-                        <select name="causa" class="mt-1 w-full rounded-lg border border-stone-300 bg-white px-3 py-2.5 text-sm text-[#1C1C1C]">
-                            <option value="">Todas</option>
-                            {% for valor in causas %}
-                                <option value="{{ valor }}" {% if filtros.causa == valor %}selected{% endif %}>{{ valor }}</option>
-                            {% endfor %}
-                        </select>
-                    </label>
-                    <label class="text-xs font-semibold text-[#78716C]">
-                        Tipo de acidente
-                        <select name="tipo" class="mt-1 w-full rounded-lg border border-stone-300 bg-white px-3 py-2.5 text-sm text-[#1C1C1C]">
-                            <option value="">Todos</option>
-                            {% for valor in tipos %}
-                                <option value="{{ valor }}" {% if filtros.tipo == valor %}selected{% endif %}>{{ valor }}</option>
-                            {% endfor %}
-                        </select>
-                    </label>
-                    <label class="text-xs font-semibold text-[#78716C]">
-                        Classificação
-                        <select name="classificacao" class="mt-1 w-full rounded-lg border border-stone-300 bg-white px-3 py-2.5 text-sm text-[#1C1C1C]">
-                            <option value="">Todas</option>
-                            {% for valor in classificacoes %}
-                                <option value="{{ valor }}" {% if filtros.classificacao == valor %}selected{% endif %}>{{ valor }}</option>
-                            {% endfor %}
-                        </select>
-                    </label>
-                    <label class="text-xs font-semibold text-[#78716C]">
-                        Fase do dia
-                        <select name="fase" class="mt-1 w-full rounded-lg border border-stone-300 bg-white px-3 py-2.5 text-sm text-[#1C1C1C]">
-                            <option value="">Todas</option>
-                            {% for valor in fases %}
-                                <option value="{{ valor }}" {% if filtros.fase == valor %}selected{% endif %}>{{ valor }}</option>
-                            {% endfor %}
-                        </select>
-                    </label>
-                    <label class="text-xs font-semibold text-[#78716C]">
-                        Condição meteorológica
-                        <select name="clima" class="mt-1 w-full rounded-lg border border-stone-300 bg-white px-3 py-2.5 text-sm text-[#1C1C1C]">
-                            <option value="">Todas</option>
-                            {% for valor in climas %}
-                                <option value="{{ valor }}" {% if filtros.clima == valor %}selected{% endif %}>{{ valor }}</option>
-                            {% endfor %}
-                        </select>
-                    </label>
-                </div>
-                <div class="mt-4 flex flex-wrap gap-2">
-                    <button class="rounded-lg bg-[#C8102E] px-4 py-2.5 text-sm font-bold text-white hover:bg-[#7A0C14]" type="submit">Filtrar</button>
-                    <a class="rounded-lg border border-stone-300 px-4 py-2.5 text-sm font-bold text-[#1C1C1C] hover:bg-stone-100" href="{{ request.path }}">Limpar</a>
-                    <a class="rounded-lg bg-[#1C1C1C] px-4 py-2.5 text-sm font-bold text-white hover:bg-[#7A0C14]" href="{% url 'exportar_csv' %}{% if query_string %}?{{ query_string }}{% endif %}">Baixar CSV</a>
-                </div>
-            </form>
-            <div class="mt-5 border-t border-stone-200 pt-4">
-                <p class="mb-2 text-xs font-bold uppercase tracking-widest text-[#78716C]">Atalhos rápidos</p>
-                <div class="flex flex-wrap gap-2">
-                    <a class="rounded-lg border border-[#C9A227] bg-white px-3 py-2 text-sm font-semibold text-[#1C1C1C] transition hover:bg-amber-50" href="{{ request.path }}?uf=PB">Paraíba</a>
-                    <a class="rounded-lg border border-[#C9A227] bg-white px-3 py-2 text-sm font-semibold text-[#1C1C1C] transition hover:bg-amber-50" href="{{ request.path }}?uf=PB&amp;br=230">BR-230 na PB</a>
-                    <a class="rounded-lg border border-[#C9A227] bg-white px-3 py-2 text-sm font-semibold text-[#1C1C1C] transition hover:bg-amber-50" href="{{ request.path }}?uf=PB&amp;municipio=JOAO+PESSOA">João Pessoa</a>
-                    <a class="rounded-lg border border-[#C9A227] bg-white px-3 py-2 text-sm font-semibold text-[#1C1C1C] transition hover:bg-amber-50" href="{{ request.path }}?uf=PB&amp;municipio=CAMPINA+GRANDE">Campina Grande</a>
-                </div>
-            </div>
-        </section>
+                <section class="mb-4 rounded-xl border border-stone-200 border-t-[3px] border-t-[#1C1C1C] bg-white p-3 shadow-sm">
+                    <form method="get" action="{{ request.path }}" id="filtros-form">
+                        <div class="flex flex-wrap items-end gap-2">
+                            <label class="min-w-[110px] flex-1 text-xs font-semibold text-[#78716C]">
+                                UF
+                                <select name="uf" id="filtro-uf" class="mt-1 w-full rounded-lg border border-stone-300 bg-white px-2.5 py-1.5 text-sm text-[#1C1C1C]">
+                                    <option value="">Todas</option>
+                                    {% for valor in ufs %}
+                                        <option value="{{ valor }}" {% if filtros.uf == valor %}selected{% endif %}>{{ valor }}</option>
+                                    {% endfor %}
+                                </select>
+                            </label>
+                            <label class="min-w-[110px] flex-1 text-xs font-semibold text-[#78716C]">
+                                BR
+                                <select name="br" id="filtro-br" class="mt-1 w-full rounded-lg border border-stone-300 bg-white px-2.5 py-1.5 text-sm text-[#1C1C1C]">
+                                    <option value="">Todas</option>
+                                    {% for valor in brs %}
+                                        <option value="{{ valor }}" {% if filtros.br == valor %}selected{% endif %}>BR-{{ valor }}</option>
+                                    {% endfor %}
+                                </select>
+                            </label>
+                            <label class="min-w-[150px] flex-1 text-xs font-semibold text-[#78716C]">
+                                Município
+                                <select name="municipio" id="filtro-municipio" class="mt-1 w-full rounded-lg border border-stone-300 bg-white px-2.5 py-1.5 text-sm text-[#1C1C1C]">
+                                    <option value="">Todos</option>
+                                    {% for valor in municipios %}
+                                        <option value="{{ valor }}" {% if filtros.municipio == valor %}selected{% endif %}>{{ valor }}</option>
+                                    {% endfor %}
+                                </select>
+                            </label>
+                            <label class="min-w-[130px] flex-1 text-xs font-semibold text-[#78716C]">
+                                Mês inicial
+                                <select name="mes_ini" class="mt-1 w-full rounded-lg border border-stone-300 bg-white px-2.5 py-1.5 text-sm text-[#1C1C1C]">
+                                    <option value="">Desde o início</option>
+                                    {% for mes in meses %}
+                                        <option value="{{ mes.valor }}" {% if filtros.mes_ini == mes.valor %}selected{% endif %}>{{ mes.rotulo }}</option>
+                                    {% endfor %}
+                                </select>
+                            </label>
+                            <label class="min-w-[130px] flex-1 text-xs font-semibold text-[#78716C]">
+                                Mês final
+                                <select name="mes_fim" class="mt-1 w-full rounded-lg border border-stone-300 bg-white px-2.5 py-1.5 text-sm text-[#1C1C1C]">
+                                    <option value="">Até o fim</option>
+                                    {% for mes in meses %}
+                                        <option value="{{ mes.valor }}" {% if filtros.mes_fim == mes.valor %}selected{% endif %}>{{ mes.rotulo }}</option>
+                                    {% endfor %}
+                                </select>
+                            </label>
+                            <button class="rounded-lg bg-[#C8102E] px-3 py-2 text-sm font-bold text-white hover:bg-[#7A0C14]" type="submit">Filtrar</button>
+                            <a class="rounded-lg border border-stone-300 px-3 py-2 text-sm font-bold text-[#1C1C1C] hover:bg-stone-100" href="{{ request.path }}">Limpar</a>
+                            <a class="ml-auto inline-flex items-center gap-1 rounded-lg px-2 py-2 text-sm font-semibold text-[#1C1C1C] hover:bg-stone-100" href="{% url 'exportar_csv' %}{% if query_string %}?{{ query_string }}{% endif %}" aria-label="Baixar CSV">
+                                <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                                    <path d="M12 3v12m0 0 4-4m-4 4-4-4M5 17v4h14v-4"/>
+                                </svg>
+                                CSV
+                            </a>
+                        </div>
+                        <details class="mt-2" {% if filtros.causa or filtros.tipo or filtros.classificacao or filtros.fase or filtros.clima %}open{% endif %}>
+                            <summary class="list-none cursor-pointer text-sm font-semibold text-[#7A0C14] hover:text-[#C8102E]">Mais filtros <span aria-hidden="true">▾</span></summary>
+                            <div class="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-5">
+                                <label class="text-xs font-semibold text-[#78716C]">
+                                    Causa
+                                    <select name="causa" class="mt-1 w-full rounded-lg border border-stone-300 bg-white px-2.5 py-1.5 text-sm text-[#1C1C1C]">
+                                        <option value="">Todas</option>
+                                        {% for valor in causas %}
+                                            <option value="{{ valor }}" {% if filtros.causa == valor %}selected{% endif %}>{{ valor }}</option>
+                                        {% endfor %}
+                                    </select>
+                                </label>
+                                <label class="text-xs font-semibold text-[#78716C]">
+                                    Tipo de acidente
+                                    <select name="tipo" class="mt-1 w-full rounded-lg border border-stone-300 bg-white px-2.5 py-1.5 text-sm text-[#1C1C1C]">
+                                        <option value="">Todos</option>
+                                        {% for valor in tipos %}
+                                            <option value="{{ valor }}" {% if filtros.tipo == valor %}selected{% endif %}>{{ valor }}</option>
+                                        {% endfor %}
+                                    </select>
+                                </label>
+                                <label class="text-xs font-semibold text-[#78716C]">
+                                    Classificação
+                                    <select name="classificacao" class="mt-1 w-full rounded-lg border border-stone-300 bg-white px-2.5 py-1.5 text-sm text-[#1C1C1C]">
+                                        <option value="">Todas</option>
+                                        {% for valor in classificacoes %}
+                                            <option value="{{ valor }}" {% if filtros.classificacao == valor %}selected{% endif %}>{{ valor }}</option>
+                                        {% endfor %}
+                                    </select>
+                                </label>
+                                <label class="text-xs font-semibold text-[#78716C]">
+                                    Fase do dia
+                                    <select name="fase" class="mt-1 w-full rounded-lg border border-stone-300 bg-white px-2.5 py-1.5 text-sm text-[#1C1C1C]">
+                                        <option value="">Todas</option>
+                                        {% for valor in fases %}
+                                            <option value="{{ valor }}" {% if filtros.fase == valor %}selected{% endif %}>{{ valor }}</option>
+                                        {% endfor %}
+                                    </select>
+                                </label>
+                                <label class="text-xs font-semibold text-[#78716C]">
+                                    Condição meteorológica
+                                    <select name="clima" class="mt-1 w-full rounded-lg border border-stone-300 bg-white px-2.5 py-1.5 text-sm text-[#1C1C1C]">
+                                        <option value="">Todas</option>
+                                        {% for valor in climas %}
+                                            <option value="{{ valor }}" {% if filtros.clima == valor %}selected{% endif %}>{{ valor }}</option>
+                                        {% endfor %}
+                                    </select>
+                                </label>
+                            </div>
+                        </details>
+                    </form>
+                    <div class="mt-2 flex flex-wrap gap-1.5">
+                        <a class="rounded-full border border-[#C9A227] px-2.5 py-1 text-xs font-semibold text-[#1C1C1C] hover:bg-amber-50" href="{{ request.path }}?uf=PB">Paraíba</a>
+                        <a class="rounded-full border border-[#C9A227] px-2.5 py-1 text-xs font-semibold text-[#1C1C1C] hover:bg-amber-50" href="{{ request.path }}?uf=PB&amp;br=230">BR-230 na PB</a>
+                        <a class="rounded-full border border-[#C9A227] px-2.5 py-1 text-xs font-semibold text-[#1C1C1C] hover:bg-amber-50" href="{{ request.path }}?uf=PB&amp;municipio=JOAO+PESSOA">João Pessoa</a>
+                        <a class="rounded-full border border-[#C9A227] px-2.5 py-1 text-xs font-semibold text-[#1C1C1C] hover:bg-amber-50" href="{{ request.path }}?uf=PB&amp;municipio=CAMPINA+GRANDE">Campina Grande</a>
+                    </div>
+                </section>
 
         {% block conteudo %}{% endblock %}
     </main>

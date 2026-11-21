@@ -4,7 +4,13 @@ import pandas as pd
 from django.test import Client, SimpleTestCase
 
 from .dados import calcular_kpi, limpar
-from .views import _grafico_mapa
+from .views import (
+    CONFIG_GRAFICO_HOME,
+    _figura_div,
+    _grafico_barras_indicador,
+    _grafico_mapa,
+    _preparar_cartoes_home,
+)
 
 
 def criar_dados_brutos():
@@ -142,6 +148,67 @@ class CamadaDadosTests(SimpleTestCase):
             ).layout.map.zoom,
             9,
         )
+
+    def test_cartoes_comparam_ultimo_mes_com_o_anterior(self):
+        cartoes = {
+            cartao["chave"]: cartao
+            for cartao in _preparar_cartoes_home(
+                self.dados,
+                ["2026-01", "2026-02"],
+            )
+        }
+
+        self.assertEqual(cartoes["acidentes"]["variacao"], "0,0%")
+        self.assertEqual(cartoes["mortos"]["variacao"], "-100,0%")
+        self.assertEqual(cartoes["mortos"]["tipo_variacao"], "melhorou")
+        self.assertEqual(cartoes["gravidade"]["variacao"], "-100,0%")
+        self.assertEqual(cartoes["feridos_graves"]["variacao"], "Novo")
+        self.assertEqual(cartoes["feridos_graves"]["tipo_variacao"], "piorou")
+        self.assertIn("plotly-graph-div", cartoes["mortos"]["sparkline"])
+
+    def test_barras_quebram_rotulos_sem_perder_nome_no_hover(self):
+        dados_barras = pd.concat(
+            [
+                self.dados.iloc[[0]].assign(
+                    causa_acidente=(
+                        f"Causa extensa numero {indice} com descrição completa"
+                    )
+                )
+                for indice in range(10)
+            ],
+            ignore_index=True,
+        )
+        figura = _grafico_barras_indicador(
+            dados_barras,
+            "causa_acidente",
+            "acidentes",
+            "Top causas",
+        )
+
+        rotulos = figura.data[0].y
+        self.assertTrue(any("<br>" in rotulo for rotulo in rotulos))
+        self.assertTrue(
+            all(
+                len(linha) <= 28
+                for rotulo in rotulos
+                for linha in rotulo.split("<br>")
+            )
+        )
+        self.assertIn(
+            "Causa extensa numero 0 com descrição completa",
+            figura.data[0].customdata[:, 0],
+        )
+        self.assertIn("<extra></extra>", figura.data[0].hovertemplate)
+        self.assertGreater(figura.layout.height, 300)
+        self.assertTrue(figura.layout.yaxis.automargin)
+
+    def test_graficos_da_home_podem_ocultar_barra_de_ferramentas(self):
+        figura = _grafico_barras_indicador(
+            self.dados, "causa_acidente", "acidentes", "Top causas"
+        )
+        div = _figura_div(figura, config=CONFIG_GRAFICO_HOME)
+
+        self.assertIn('"displayModeBar": false', div)
 
 
 class RotasPainelTests(SimpleTestCase):

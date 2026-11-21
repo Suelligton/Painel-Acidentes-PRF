@@ -1,10 +1,13 @@
+import textwrap
 from io import StringIO
 
 import pandas as pd
 import plotly.express as px
+import plotly.graph_objects as go
 from django.http import Http404, HttpResponse
 from django.shortcuts import render
 from plotly.offline import get_plotlyjs, plot
+from plotly.subplots import make_subplots
 
 from .dados import INDICADORES, MESES_NOME, calcular_kpi, carregar_dados
 
@@ -23,6 +26,8 @@ CORES_CLASSIFICACAO = {
     "Sem Vítimas": CORES_PMPB["cinza"],
     "NÃO INFORMADO": CORES_PMPB["preto"],
 }
+
+CONFIG_GRAFICO_HOME = {"displayModeBar": False, "displaylogo": False}
 
 DIAS_SEMANA = [
     "segunda-feira",
@@ -188,12 +193,12 @@ def _aplicar_tema(figura):
     return figura
 
 
-def _figura_div(figura):
+def _figura_div(figura, config=None):
     return plot(
         figura,
         output_type="div",
         include_plotlyjs=False,
-        config={"displaylogo": False},
+        config=config if config is not None else {"displaylogo": False},
     )
 
 
@@ -246,18 +251,39 @@ def _grafico_mensal(df, periodos):
     return _aplicar_tema(figura)
 
 
-def _figura_barras(contagens, titulo, cor):
-    contagens = (
-        contagens.sort_values(ascending=True)
-        .rename_axis("categoria")
-        .reset_index(name="acidentes")
+def _quebrar_rotulo_barras(rotulo):
+    linhas = textwrap.wrap(
+        str(rotulo),
+        width=28,
+        break_long_words=False,
+        break_on_hyphens=False,
+    )
+    return "<br>".join(linhas) or " "
+
+
+def _altura_barras(rotulos, altura_minima=300):
+    total_linhas = sum(rotulo.count("<br>") + 1 for rotulo in rotulos)
+    return max(altura_minima, total_linhas * 28 + 40)
+
+
+def _figura_barras(contagens, titulo, cor, altura_minima=300):
+    contagens = contagens.sort_values(ascending=True)
+    categorias = [str(categoria) for categoria in contagens.index]
+    rotulos = [_quebrar_rotulo_barras(categoria) for categoria in categorias]
+    tabela = pd.DataFrame(
+        {
+            "categoria": rotulos,
+            "categoria_completa": categorias,
+            "acidentes": contagens.to_numpy(),
+        }
     )
     figura = px.bar(
-        contagens,
+        tabela,
         x="acidentes",
         y="categoria",
         orientation="h",
         text="acidentes",
+        custom_data=["categoria_completa"],
         title=titulo,
         color_discrete_sequence=[cor or CORES_PMPB["vermelho"]],
         template="plotly_white",
@@ -267,13 +293,17 @@ def _figura_barras(contagens, titulo, cor):
         textposition="inside",
         textfont_color="white",
         cliponaxis=False,
+        hovertemplate="%{customdata[0]}<br>Acidentes: %{x:,.0f}<extra></extra>",
     )
+    figura = _aplicar_tema(figura)
     figura.update_layout(
         xaxis_title="Acidentes",
         yaxis_title="",
-        margin={"l": 24, "r": 25, "t": 55, "b": 30},
+        height=_altura_barras(rotulos, altura_minima),
+        margin={"l": 160, "r": 25, "t": 55 if titulo else 10, "b": 30},
     )
-    return _aplicar_tema(figura)
+    figura.update_yaxes(automargin=True)
+    return figura
 
 
 def _grafico_barras(df, coluna, titulo, limite=None, cor=None):
@@ -301,6 +331,302 @@ def _serie_indicador(df, colunas_grupo, chave):
     raise ValueError(f"Tipo de indicador não suportado: {indicador['tipo']}")
 
 
+CORES_CARTOES_HOME = {
+    "acidentes": CORES_PMPB["cinza"],
+    "mortos": CORES_PMPB["vermelho"],
+    "feridos_graves": CORES_PMPB["vermelho_escuro"],
+    "feridos_leves": CORES_PMPB["dourado"],
+    "veiculos": CORES_PMPB["preto"],
+    "gravidade": CORES_PMPB["vermelho_escuro"],
+}
+
+
+def _serie_mensal_home(df, periodos, chave):
+    if df.empty or not periodos:
+        return pd.Series(dtype="float64")
+    dados = df.assign(periodo=df["data"].dt.strftime("%Y-%m"))
+    return _serie_indicador(dados, "periodo", chave).reindex(periodos, fill_value=0)
+
+
+def _grafico_sparkline(periodos, valores, cor):
+    if valores.empty:
+        return None
+
+    figura = go.Figure(
+        go.Scatter(
+            x=periodos,
+            y=valores.to_numpy(),
+            mode="lines+markers",
+            line={"color": cor, "width": 2},
+            marker={"color": cor, "size": 3},
+            hoverinfo="skip",
+        )
+    )
+    figura.update_layout(
+        template="plotly_white",
+        height=40,
+        margin={"l": 0, "r": 0, "t": 0, "b": 0},
+        paper_bgcolor="rgba(0,0,0,0)",
+        plot_bgcolor="rgba(0,0,0,0)",
+        showlegend=False,
+    )
+    figura.update_xaxes(visible=False, fixedrange=True)
+    figura.update_yaxes(visible=False, fixedrange=True, rangemode="tozero")
+    return _figura_div(figura, config=CONFIG_GRAFICO_HOME)
+
+
+def _formatar_variacao_home(valor):
+    return f"{valor:,.1f}%".replace(",", "X").replace(".", ",").replace("X", ".")
+
+
+def _preparar_cartoes_home(df, periodos):
+    cartoes = _preparar_kpis(df, incluir_chave=True)
+    for cartao in cartoes:
+        chave = cartao["chave"]
+        valores = _serie_mensal_home(df, periodos, chave)
+        anterior = valores.iloc[-2] if len(valores) > 1 else None
+        atual = valores.iloc[-1] if len(valores) > 1 else None
+        tipo_variacao = "neutra"
+        variacao = "Sem comparação"
+
+        if anterior is not None and atual is not None:
+            if anterior == 0:
+                if atual > 0:
+                    variacao = "Novo"
+                    tipo_variacao = "piorou"
+                else:
+                    variacao = "0,0%"
+            else:
+                percentual = (atual - anterior) / abs(anterior) * 100
+                variacao = _formatar_variacao_home(percentual)
+                if percentual > 0:
+                    tipo_variacao = "piorou"
+                elif percentual < 0:
+                    tipo_variacao = "melhorou"
+
+        cor = CORES_CARTOES_HOME[chave]
+        cartao.update(
+            {
+                "cor": cor,
+                "variacao": variacao,
+                "tipo_variacao": tipo_variacao,
+                "sparkline": _grafico_sparkline(periodos, valores, cor),
+            }
+        )
+    return cartoes
+
+
+def _grafico_evolucao_home(df, periodos):
+    if df.empty or not periodos:
+        return None
+
+    mensal = (
+        df.assign(periodo=df["data"].dt.strftime("%Y-%m"))
+        .groupby("periodo")
+        .agg(acidentes=("id", "size"), mortos=("mortos", "sum"))
+        .reindex(periodos, fill_value=0)
+    )
+    rotulos = [_rotulo_periodo(periodo) for periodo in periodos]
+    figura = make_subplots(specs=[[{"secondary_y": True}]])
+    figura.add_trace(
+        go.Bar(
+            x=rotulos,
+            y=mensal["acidentes"],
+            name="Acidentes",
+            marker_color=CORES_PMPB["cinza"],
+            hovertemplate="%{x}<br>Acidentes: %{y:,.0f}<extra></extra>",
+        ),
+        secondary_y=False,
+    )
+    figura.add_trace(
+        go.Scatter(
+            x=rotulos,
+            y=mensal["mortos"],
+            name="Mortos",
+            mode="lines+markers",
+            line={"color": CORES_PMPB["vermelho"], "width": 2.5},
+            marker={"size": 6},
+            hovertemplate="%{x}<br>Mortos: %{y:,.0f}<extra></extra>",
+        ),
+        secondary_y=True,
+    )
+    figura.update_layout(
+        template="plotly_white",
+        height=340,
+        margin={"l": 10, "r": 10, "t": 10, "b": 38},
+        separators=",.",
+        barmode="group",
+        legend={
+            "orientation": "h",
+            "yanchor": "top",
+            "y": -0.18,
+            "xanchor": "center",
+            "x": 0.5,
+        },
+        hovermode="x unified",
+    )
+    figura.update_xaxes(tickangle=-20, title_text="")
+    figura.update_yaxes(title_text="", rangemode="tozero", secondary_y=False)
+    figura.update_yaxes(title_text="", rangemode="tozero", secondary_y=True)
+    return figura
+
+
+def _grafico_causas_home(df):
+    contagens = df["causa_acidente"].value_counts().head(5).sort_values()
+    figura = _figura_barras(contagens, None, CORES_PMPB["vermelho"])
+    figura.update_layout(title=None, margin={"l": 160, "r": 10, "t": 10, "b": 10})
+    figura.update_yaxes(automargin=True)
+    return figura
+
+
+def _grafico_classificacao_home(df):
+    contagens = (
+        df["classificacao_acidente"]
+        .value_counts()
+        .rename_axis("classificacao")
+        .reset_index(name="acidentes")
+    )
+    figura = px.pie(
+        contagens,
+        names="classificacao",
+        values="acidentes",
+        hole=0.62,
+        color="classificacao",
+        color_discrete_map=CORES_CLASSIFICACAO,
+        category_orders={
+            "classificacao": [
+                "Com Vítimas Fatais",
+                "Com Vítimas Feridas",
+                "Sem Vítimas",
+            ]
+        },
+        template="plotly_white",
+    )
+    figura.update_traces(
+        textinfo="percent",
+        textposition="inside",
+        hovertemplate="%{label}<br>Acidentes: %{value:,.0f}<extra></extra>",
+    )
+    figura.update_layout(
+        height=300,
+        margin={"l": 10, "r": 10, "t": 10, "b": 36},
+        separators=",.",
+        legend={
+            "orientation": "h",
+            "yanchor": "top",
+            "y": -0.08,
+            "xanchor": "center",
+            "x": 0.5,
+        },
+    )
+    figura.add_annotation(
+        text=f"<b>{_formatar_inteiro(len(df))}</b><br>acidentes",
+        x=0.5,
+        y=0.5,
+        showarrow=False,
+        font={"size": 14, "color": CORES_PMPB["preto"]},
+    )
+    return _aplicar_tema(figura)
+
+
+def _grafico_ranking_home(df, filtros):
+    if filtros["uf"]:
+        contagens = df["br"].dropna().astype(int).value_counts()
+        contagens.index = [f"BR-{valor}" for valor in contagens.index]
+        cor = CORES_PMPB["vermelho_escuro"]
+    else:
+        contagens = df["uf"].value_counts()
+        cor = CORES_PMPB["vermelho"]
+    contagens = contagens.head(5).sort_values()
+    figura = _figura_barras(contagens, None, cor)
+    figura.update_layout(title=None, margin={"l": 160, "r": 10, "t": 10, "b": 10})
+    figura.update_yaxes(automargin=True)
+    return figura
+
+
+def _grafico_mapa_home(df, filtros):
+    pontos = df.dropna(subset=["latitude", "longitude"]).copy()
+    pontos = pontos.loc[
+        pontos["latitude"].between(-90, 90)
+        & pontos["longitude"].between(-180, 180)
+    ]
+    if pontos.empty:
+        return None
+
+    centro = {
+        "lat": float(pontos["latitude"].mean()),
+        "lon": float(pontos["longitude"].mean()),
+    }
+    if len(pontos) > 3000:
+        pontos = pontos.sample(n=3000, random_state=1)
+
+    pontos["localidade_hover"] = (
+        pontos["municipio"].astype("string") + " - " + pontos["uf"].astype("string")
+    )
+    pontos["trecho_hover"] = pontos.apply(
+        lambda linha: (
+            f"BR-{int(linha['br'])}, km {linha['km']:.1f}".replace(".", ",")
+            if pd.notna(linha["br"]) and pd.notna(linha["km"])
+            else "Trecho não informado"
+        ),
+        axis=1,
+    )
+    datas = pontos["data_inversa"].dt.strftime("%d/%m/%Y").fillna("Data não informada")
+    horarios = pontos["horario"].astype("string").fillna("Horário não informado")
+    pontos["data_hora_hover"] = datas + " " + horarios
+
+    zoom = 9 if filtros["municipio"] else 6 if filtros["uf"] else 3.3
+    figura = px.scatter_map(
+        pontos,
+        lat="latitude",
+        lon="longitude",
+        color="classificacao_acidente",
+        color_discrete_map=CORES_CLASSIFICACAO,
+        category_orders={
+            "classificacao_acidente": [
+                "Com Vítimas Fatais",
+                "Com Vítimas Feridas",
+                "Sem Vítimas",
+            ]
+        },
+        hover_name="localidade_hover",
+        custom_data=[
+            "trecho_hover",
+            "data_hora_hover",
+            "causa_acidente",
+            "tipo_acidente",
+            "classificacao_acidente",
+            "mortos",
+            "feridos",
+        ],
+        map_style="carto-positron",
+        center=centro,
+        zoom=zoom,
+        opacity=0.7,
+        height=340,
+        template="plotly_white",
+    )
+    figura.update_traces(
+        marker={"size": 7},
+        hovertemplate=(
+            "<b>%{hovertext}</b><br>"
+            "%{customdata[0]}<br>"
+            "Data e hora: %{customdata[1]}<br>"
+            "Causa: %{customdata[2]}<br>"
+            "Tipo: %{customdata[3]}<br>"
+            "Classificação: %{customdata[4]}<br>"
+            "Mortos: %{customdata[5]} | Feridos: %{customdata[6]}"
+            "<extra></extra>"
+        ),
+    )
+    figura.update_layout(
+        height=340,
+        showlegend=False,
+        margin={"l": 10, "r": 10, "t": 10, "b": 10},
+    )
+    return _aplicar_tema(figura)
+
+
 def _rotulo_grupo(valor):
     if isinstance(valor, tuple):
         partes = ["NÃO INFORMADO" if pd.isna(parte) else str(parte) for parte in valor]
@@ -311,9 +637,12 @@ def _rotulo_grupo(valor):
 def _grafico_barras_indicador(df, coluna, chave, titulo, limite=10):
     valores = _serie_indicador(df, coluna, chave).sort_values(ascending=False).head(limite)
     valores = valores.sort_values(ascending=True)
+    categorias = [_rotulo_grupo(valor) for valor in valores.index]
+    rotulos = [_quebrar_rotulo_barras(categoria) for categoria in categorias]
     tabela = pd.DataFrame(
         {
-            "categoria": [_rotulo_grupo(valor) for valor in valores.index],
+            "categoria": rotulos,
+            "categoria_completa": categorias,
             "valor": valores.to_numpy(),
         }
     )
@@ -324,6 +653,7 @@ def _grafico_barras_indicador(df, coluna, chave, titulo, limite=10):
         y="categoria",
         orientation="h",
         text="valor",
+        custom_data=["categoria_completa"],
         title=titulo,
         color_discrete_sequence=[CORES_PMPB["vermelho"]],
         template="plotly_white",
@@ -333,13 +663,21 @@ def _grafico_barras_indicador(df, coluna, chave, titulo, limite=10):
         textposition="inside",
         textfont_color="white",
         cliponaxis=False,
+        hovertemplate=(
+            "%{customdata[0]}<br>"
+            + INDICADORES[chave]["nome"]
+            + f": %{{x:,.{casas_decimais}f}}<extra></extra>"
+        ),
     )
+    figura = _aplicar_tema(figura)
     figura.update_layout(
         xaxis_title=INDICADORES[chave]["nome"],
         yaxis_title="",
-        margin={"l": 24, "r": 30, "t": 55, "b": 35},
+        height=_altura_barras(rotulos),
+        margin={"l": 160, "r": 30, "t": 55, "b": 35},
     )
-    return _aplicar_tema(figura)
+    figura.update_yaxes(automargin=True)
+    return figura
 
 
 def _grafico_mensal_indicador(df, periodos, chave):
@@ -750,16 +1088,44 @@ def home(request):
     filtrado = aplicar_filtros(df, filtros)
     periodos = _periodos_filtrados(df, filtros)
     contexto = _contexto_comum(request, df, filtros, filtrado, "home")
+    sem_registros = filtrado.empty
+    mapa = _grafico_mapa_home(filtrado, filtros) if not sem_registros else None
     contexto.update(
         {
-            "cartoes": _preparar_kpis(filtrado, incluir_chave=True),
-            "grafico_mensal": (
-                _figura_div(_grafico_mensal(filtrado, periodos))
-                if not filtrado.empty
-                else None
-            ),
+            "cartoes": _preparar_cartoes_home(filtrado, periodos),
+            "grafico_mensal": _figura_div(
+                _grafico_evolucao_home(filtrado, periodos),
+                config=CONFIG_GRAFICO_HOME,
+            )
+            if not sem_registros
+            else None,
+            "grafico_mapa": _figura_div(mapa, config=CONFIG_GRAFICO_HOME)
+            if mapa is not None
+            else None,
+            "grafico_causas": _figura_div(
+                _grafico_causas_home(filtrado),
+                config=CONFIG_GRAFICO_HOME,
+            )
+            if not sem_registros
+            else None,
+            "grafico_classificacao": _figura_div(
+                _grafico_classificacao_home(filtrado),
+                config=CONFIG_GRAFICO_HOME,
+            )
+            if not sem_registros
+            else None,
+            "grafico_ranking": _figura_div(
+                _grafico_ranking_home(filtrado, filtros),
+                config=CONFIG_GRAFICO_HOME,
+            )
+            if not sem_registros
+            else None,
+            "titulo_ranking": "Top 5 BRs" if filtros["uf"] else "Top 5 UFs",
             "mensagem_sem_registros": (
-                "" if not filtrado.empty else "Sem registros para os filtros escolhidos"
+                "" if not sem_registros else "Sem registros para os filtros escolhidos"
+            ),
+            "mensagem_sem_coordenadas": (
+                not sem_registros and mapa is None
             ),
         }
     )
