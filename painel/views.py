@@ -2,7 +2,7 @@ from io import StringIO
 
 import pandas as pd
 import plotly.express as px
-from django.http import HttpResponse
+from django.http import Http404, HttpResponse
 from django.shortcuts import render
 from plotly.offline import get_plotlyjs, plot
 
@@ -149,9 +149,24 @@ def _formatar_inteiro(valor):
     return f"{int(valor):,}".replace(",", ".")
 
 
+def _formatar_kpi(chave, valor):
+    if INDICADORES[chave]["tipo"] == "razao":
+        return f"{valor:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+    return _formatar_inteiro(valor)
+
+
 def _rotulo_periodo(periodo):
     ano, numero_mes = periodo.split("-")
     return f"{MESES_NOME[int(numero_mes)]}/{ano}"
+
+
+def _periodos_filtrados(df, filtros):
+    return [
+        periodo
+        for periodo in _periodos(df)
+        if (not filtros["mes_ini"] or periodo >= filtros["mes_ini"])
+        and (not filtros["mes_fim"] or periodo <= filtros["mes_fim"])
+    ]
 
 
 def _aplicar_tema(figura):
@@ -270,6 +285,165 @@ def _grafico_barras(df, coluna, titulo, limite=None, cor=None):
         titulo,
         cor or CORES_PMPB["vermelho"],
     )
+
+
+def _serie_indicador(df, colunas_grupo, chave):
+    colunas = [colunas_grupo] if isinstance(colunas_grupo, str) else colunas_grupo
+    agrupamento = df.groupby(colunas, dropna=False, sort=False)
+    indicador = INDICADORES[chave]
+
+    if indicador["tipo"] == "contagem":
+        return agrupamento.size()
+    if indicador["tipo"] == "soma":
+        return agrupamento[indicador["coluna"]].sum()
+    if indicador["tipo"] == "razao":
+        return agrupamento[indicador["coluna"]].sum().div(agrupamento.size()).mul(100)
+    raise ValueError(f"Tipo de indicador não suportado: {indicador['tipo']}")
+
+
+def _rotulo_grupo(valor):
+    if isinstance(valor, tuple):
+        partes = ["NÃO INFORMADO" if pd.isna(parte) else str(parte) for parte in valor]
+        return " / ".join(partes)
+    return "NÃO INFORMADO" if pd.isna(valor) else str(valor)
+
+
+def _grafico_barras_indicador(df, coluna, chave, titulo, limite=10):
+    valores = _serie_indicador(df, coluna, chave).sort_values(ascending=False).head(limite)
+    valores = valores.sort_values(ascending=True)
+    tabela = pd.DataFrame(
+        {
+            "categoria": [_rotulo_grupo(valor) for valor in valores.index],
+            "valor": valores.to_numpy(),
+        }
+    )
+    casas_decimais = 2 if INDICADORES[chave]["tipo"] == "razao" else 0
+    figura = px.bar(
+        tabela,
+        x="valor",
+        y="categoria",
+        orientation="h",
+        text="valor",
+        title=titulo,
+        color_discrete_sequence=[CORES_PMPB["vermelho"]],
+        template="plotly_white",
+    )
+    figura.update_traces(
+        texttemplate=f"%{{x:,.{casas_decimais}f}}",
+        textposition="inside",
+        textfont_color="white",
+        cliponaxis=False,
+    )
+    figura.update_layout(
+        xaxis_title=INDICADORES[chave]["nome"],
+        yaxis_title="",
+        margin={"l": 24, "r": 30, "t": 55, "b": 35},
+    )
+    return _aplicar_tema(figura)
+
+
+def _grafico_mensal_indicador(df, periodos, chave):
+    dados = df.assign(periodo=df["data"].dt.strftime("%Y-%m"))
+    valores = _serie_indicador(dados, "periodo", chave).reindex(periodos, fill_value=0)
+    tabela = valores.rename("valor").reset_index()
+    tabela["mes"] = tabela["periodo"].map(_rotulo_periodo)
+    rotulos = [_rotulo_periodo(periodo) for periodo in periodos]
+    figura = px.line(
+        tabela,
+        x="mes",
+        y="valor",
+        markers=True,
+        category_orders={"mes": rotulos},
+        title=f"Evolução mensal: {INDICADORES[chave]['nome']}",
+        color_discrete_sequence=[CORES_PMPB["vermelho"]],
+        template="plotly_white",
+    )
+    figura.update_traces(
+        line={"width": 3},
+        hovertemplate="%{x}<br>"
+        + INDICADORES[chave]["nome"]
+        + ": %{y:,.2f}<extra></extra>",
+    )
+    figura.update_yaxes(title_text=INDICADORES[chave]["nome"], rangemode="tozero")
+    figura.update_xaxes(title_text="Mês", tickangle=-25)
+    return _aplicar_tema(figura)
+
+
+def _grafico_calor_indicador(df, chave):
+    valores = _serie_indicador(df, ["dia_semana", "hora"], chave)
+    tabela = (
+        valores.unstack("hora")
+        .reindex(index=DIAS_SEMANA, columns=range(24), fill_value=0)
+    )
+    texto = ".2f" if INDICADORES[chave]["tipo"] == "razao" else True
+    figura = px.imshow(
+        tabela,
+        x=[f"{hora:02d}" for hora in range(24)],
+        y=DIAS_SEMANA,
+        aspect="auto",
+        text_auto=texto,
+        labels={
+            "x": "Hora do dia",
+            "y": "Dia da semana",
+            "color": INDICADORES[chave]["nome"],
+        },
+        color_continuous_scale=[
+            [0, "#F5F5F4"],
+            [0.5, CORES_PMPB["dourado"]],
+            [1, CORES_PMPB["vermelho"]],
+        ],
+        title=f"{INDICADORES[chave]['nome']} por dia da semana e hora",
+        template="plotly_white",
+    )
+    return _aplicar_tema(figura)
+
+
+def _tabelas_indicador(df, chave):
+    trechos = _serie_indicador(df, "trecho", chave)
+    trechos = trechos[trechos.index != "NÃO INFORMADO"].sort_values(ascending=False).head(10)
+    municipios = _serie_indicador(df, ["municipio", "uf"], chave)
+    municipios = municipios.sort_values(ascending=False).head(10)
+
+    return (
+        [
+            {"nome": _rotulo_grupo(trecho), "valor": _formatar_kpi(chave, valor)}
+            for trecho, valor in trechos.items()
+        ],
+        [
+            {"nome": _rotulo_grupo(municipio), "valor": _formatar_kpi(chave, valor)}
+            for municipio, valor in municipios.items()
+        ],
+    )
+
+
+def _comparar_trimestres(df, filtros, chave):
+    # A comparação usa os trimestres fixos e conserva os filtros não temporais.
+    filtros_comparacao = filtros.copy()
+    filtros_comparacao["mes_ini"] = ""
+    filtros_comparacao["mes_fim"] = ""
+    dados = aplicar_filtros(df, filtros_comparacao)
+    meses = dados["data"].dt.month
+    primeiro_trimestre = dados.loc[meses.between(1, 3)]
+    terceiro_trimestre = dados.loc[meses.between(7, 9)]
+    valor_primeiro = calcular_kpi(primeiro_trimestre, chave)
+    valor_terceiro = calcular_kpi(terceiro_trimestre, chave)
+
+    if valor_primeiro:
+        variacao = (valor_terceiro - valor_primeiro) / abs(valor_primeiro) * 100
+        variacao_formatada = (
+            f"{variacao:+,.2f}%"
+            .replace(",", "X")
+            .replace(".", ",")
+            .replace("X", ".")
+        )
+    else:
+        variacao_formatada = "—"
+
+    return {
+        "primeiro": _formatar_kpi(chave, valor_primeiro),
+        "terceiro": _formatar_kpi(chave, valor_terceiro),
+        "variacao": variacao_formatada,
+    }
 
 
 def _grafico_calor(df):
@@ -454,72 +628,163 @@ def _gerar_graficos(df, periodos, filtros):
     }
 
 
+def _preparar_kpis(df, incluir_chave=False):
+    kpis = []
+    for chave, indicador in INDICADORES.items():
+        kpi = {
+            "nome": indicador["nome"],
+            "descricao": indicador["descricao"],
+            "valor": _formatar_kpi(chave, calcular_kpi(df, chave)),
+        }
+        if incluir_chave:
+            kpi["chave"] = chave
+        kpis.append(kpi)
+    return kpis
+
+
+def _contexto_comum(request, df, filtros, filtrado, pagina_atual):
+    ufs, brs_por_uf, municipios_por_uf = _opcoes_dependentes(df)
+    meses = _periodos(df)
+    return {
+        "filtros": filtros,
+        "query_string": request.GET.urlencode(),
+        "nav_active": pagina_atual,
+        "indicadores_menu": [
+            {"chave": chave, "nome": indicador["nome"]}
+            for chave, indicador in INDICADORES.items()
+        ],
+        "ufs": ufs,
+        "brs": brs_por_uf[filtros["uf"]],
+        "municipios": municipios_por_uf[filtros["uf"]],
+        "brs_por_uf": brs_por_uf,
+        "municipios_por_uf": municipios_por_uf,
+        "meses": [
+            {"valor": periodo, "rotulo": _rotulo_periodo(periodo)}
+            for periodo in meses
+        ],
+        "causas": _valores_texto(df, "causa_acidente"),
+        "tipos": _valores_texto(df, "tipo_acidente"),
+        "classificacoes": _valores_texto(df, "classificacao_acidente"),
+        "fases": _valores_texto(df, "fase_dia"),
+        "climas": _valores_texto(df, "condicao_metereologica"),
+        "total_filtrado": _formatar_inteiro(len(filtrado)),
+    }
+
+
+def home(request):
+    df = carregar_dados()
+    filtros = ler_filtros(request)
+    filtrado = aplicar_filtros(df, filtros)
+    periodos = _periodos_filtrados(df, filtros)
+    contexto = _contexto_comum(request, df, filtros, filtrado, "home")
+    contexto.update(
+        {
+            "cartoes": _preparar_kpis(filtrado, incluir_chave=True),
+            "grafico_mensal": (
+                _figura_div(_grafico_mensal(filtrado, periodos))
+                if not filtrado.empty
+                else None
+            ),
+            "mensagem_sem_registros": (
+                "" if not filtrado.empty else "Sem registros para os filtros escolhidos"
+            ),
+        }
+    )
+    return render(request, "painel/home.html", contexto)
+
+
 def painel(request):
     df = carregar_dados()
     filtros = ler_filtros(request)
     filtrado = aplicar_filtros(df, filtros)
-    todos_periodos = _periodos(df)
-    periodos_grafico = [
-        periodo
-        for periodo in todos_periodos
-        if (not filtros["mes_ini"] or periodo >= filtros["mes_ini"])
-        and (not filtros["mes_fim"] or periodo <= filtros["mes_fim"])
-    ]
+    periodos = _periodos_filtrados(df, filtros)
 
-    kpis = []
-    for chave, indicador in INDICADORES.items():
-        valor = calcular_kpi(filtrado, chave)
-        if indicador["tipo"] == "razao":
-            valor_formatado = f"{valor:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
-        else:
-            valor_formatado = _formatar_inteiro(valor)
-        kpis.append(
+    contexto = _contexto_comum(request, df, filtros, filtrado, "painel")
+    contexto["kpis"] = _preparar_kpis(filtrado)
+    if filtrado.empty:
+        contexto.update(
             {
-                "nome": indicador["nome"],
-                "descricao": indicador["descricao"],
-                "valor": valor_formatado,
+                "graficos": {},
+                "mensagem_sem_registros": "Sem registros para os filtros escolhidos",
+                "tabela_trechos": [],
+                "tabela_municipios": [],
             }
         )
+    else:
+        tabela_trechos, tabela_municipios = _preparar_tabelas(filtrado)
+        contexto.update(
+            {
+                "graficos": _gerar_graficos(filtrado, periodos, filtros),
+                "mensagem_sem_registros": "",
+                "tabela_trechos": tabela_trechos,
+                "tabela_municipios": tabela_municipios,
+            }
+        )
+    return render(request, "painel/painel.html", contexto)
+
+
+def indicador(request, slug):
+    if slug not in INDICADORES:
+        raise Http404("Indicador não encontrado.")
+
+    df = carregar_dados()
+    filtros = ler_filtros(request)
+    filtrado = aplicar_filtros(df, filtros)
+    indicador_info = INDICADORES[slug]
+    periodos = _periodos_filtrados(df, filtros)
+    contexto = _contexto_comum(request, df, filtros, filtrado, slug)
 
     if filtrado.empty:
         graficos = {}
-        mensagem_sem_registros = "Sem registros para os filtros escolhidos"
         tabela_trechos, tabela_municipios = [], []
+        mensagem_sem_registros = "Sem registros para os filtros escolhidos"
     else:
-        graficos = _gerar_graficos(filtrado, periodos_grafico, filtros)
+        coluna_ranking = "br" if filtros["uf"] else "uf"
+        nome_ranking = "BR" if filtros["uf"] else "UF"
+        graficos = {
+            "mensal": _figura_div(
+                _grafico_mensal_indicador(filtrado, periodos, slug)
+            ),
+            "causas": _figura_div(
+                _grafico_barras_indicador(
+                    filtrado,
+                    "causa_acidente",
+                    slug,
+                    f"Top 10 causas · {indicador_info['nome']}",
+                )
+            ),
+            "ranking": _figura_div(
+                _grafico_barras_indicador(
+                    filtrado,
+                    coluna_ranking,
+                    slug,
+                    f"Ranking por {nome_ranking} · {indicador_info['nome']}",
+                    limite=None,
+                )
+            ),
+            "calor": _figura_div(_grafico_calor_indicador(filtrado, slug)),
+        }
+        tabela_trechos, tabela_municipios = _tabelas_indicador(filtrado, slug)
         mensagem_sem_registros = ""
-        tabela_trechos, tabela_municipios = _preparar_tabelas(filtrado)
 
-    ufs, brs_por_uf, municipios_por_uf = _opcoes_dependentes(df)
-    chave_uf = filtros["uf"]
-    return render(
-        request,
-        "painel/painel.html",
+    valor_total = calcular_kpi(filtrado, slug)
+    contexto.update(
         {
-            "filtros": filtros,
-            "querystring": request.GET.urlencode(),
+            "indicador": indicador_info,
+            "slug": slug,
+            "valor_total": _formatar_kpi(slug, valor_total),
+            "comparacao": _comparar_trimestres(df, filtros, slug),
             "graficos": graficos,
-            "mensagem_sem_registros": mensagem_sem_registros,
-            "kpis": kpis,
             "tabela_trechos": tabela_trechos,
             "tabela_municipios": tabela_municipios,
-            "ufs": ufs,
-            "brs": brs_por_uf[chave_uf],
-            "municipios": municipios_por_uf[chave_uf],
-            "brs_por_uf": brs_por_uf,
-            "municipios_por_uf": municipios_por_uf,
-            "meses": [
-                {"valor": periodo, "rotulo": _rotulo_periodo(periodo)}
-                for periodo in todos_periodos
-            ],
-            "causas": _valores_texto(df, "causa_acidente"),
-            "tipos": _valores_texto(df, "tipo_acidente"),
-            "classificacoes": _valores_texto(df, "classificacao_acidente"),
-            "fases": _valores_texto(df, "fase_dia"),
-            "climas": _valores_texto(df, "condicao_metereologica"),
-            "total_filtrado": _formatar_inteiro(len(filtrado)),
-        },
+            "mensagem_sem_registros": mensagem_sem_registros,
+            "periodo_comparacao_nota": (
+                "A comparação mantém os demais filtros; o intervalo mensal selecionado "
+                "não altera os trimestres fixos."
+            ),
+        }
     )
+    return render(request, "painel/indicador.html", contexto)
 
 
 def exportar_csv(request):

@@ -1,5 +1,5 @@
 import pandas as pd
-from django.test import SimpleTestCase
+from django.test import Client, SimpleTestCase
 
 from .dados import calcular_kpi, limpar
 
@@ -90,3 +90,18 @@ class CamadaDadosTests(SimpleTestCase):
         self.assertEqual(calcular_kpi(self.dados, "veiculos"), 8)
         self.assertEqual(calcular_kpi(self.dados, "gravidade"), 50.0)
         self.assertEqual(calcular_kpi(self.dados.iloc[0:0], "gravidade"), 0)
+
+
+class RotasPainelTests(SimpleTestCase):
+    def setUp(self):
+        self.client = Client(HTTP_HOST="localhost")
+
+    def test_paginas_principais_respondem_com_sucesso(self):
+        for caminho in ("/", "/painel/", "/indicador/mortos/"):
+            with self.subTest(caminho=caminho):
+                resposta = self.client.get(caminho)
+                self.assertEqual(resposta.status_code, 200)
+
+    def test_indicador_inexistente_responde_nao_encontrado(self):
+        resposta = self.client.get("/indicador/inexistente/")
+        self.assertEqual(resposta.status_code, 404)
