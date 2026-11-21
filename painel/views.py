@@ -504,7 +504,11 @@ def _grafico_rosca(df, coluna, titulo):
 
 
 def _grafico_mapa(df):
-    pontos = df.dropna(subset=["latitude", "longitude"])
+    pontos = df.dropna(subset=["latitude", "longitude"]).copy()
+    pontos = pontos.loc[
+        pontos["latitude"].between(-90, 90)
+        & pontos["longitude"].between(-180, 180)
+    ]
     titulo = "Localização dos acidentes"
     if len(pontos) > 5000:
         pontos = pontos.sample(n=5000, random_state=1)

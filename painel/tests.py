@@ -1,7 +1,10 @@
+from unittest.mock import patch
+
 import pandas as pd
 from django.test import Client, SimpleTestCase
 
 from .dados import calcular_kpi, limpar
+from .views import _grafico_mapa
 
 
 def criar_dados_brutos():
@@ -91,6 +94,15 @@ class CamadaDadosTests(SimpleTestCase):
         self.assertEqual(calcular_kpi(self.dados, "gravidade"), 50.0)
         self.assertEqual(calcular_kpi(self.dados.iloc[0:0], "gravidade"), 0)
 
+    def test_mapa_ignora_coordenadas_vazias_ou_invalidas(self):
+        dados_sem_pontos_validos = pd.DataFrame(
+            {
+                "latitude": [None, float("inf")],
+                "longitude": [None, 0],
+            }
+        )
+        self.assertIsNone(_grafico_mapa(dados_sem_pontos_validos))
+
 
 class RotasPainelTests(SimpleTestCase):
     def setUp(self):
@@ -105,3 +117,17 @@ class RotasPainelTests(SimpleTestCase):
     def test_indicador_inexistente_responde_nao_encontrado(self):
         resposta = self.client.get("/indicador/inexistente/")
         self.assertEqual(resposta.status_code, 404)
+
+    @patch("painel.views.carregar_dados")
+    def test_filtros_sem_registros_mostram_mensagem_sem_quebrar(self, carregar_dados):
+        carregar_dados.return_value = limpar(criar_dados_brutos())
+        query = "?uf=TO&causa=Condutor+dormindo"
+
+        for caminho in ("/", "/painel/", "/indicador/mortos/"):
+            with self.subTest(caminho=caminho):
+                resposta = self.client.get(f"{caminho}{query}")
+                self.assertContains(
+                    resposta,
+                    "Sem registros para os filtros escolhidos",
+                    status_code=200,
+                )

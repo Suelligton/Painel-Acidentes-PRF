@@ -52,8 +52,10 @@
             {% endif %}
         </article>
         <article class="min-w-0 rounded-xl border border-stone-200 border-t-[3px] border-t-[#1C1C1C] bg-white p-3 shadow-sm xl:col-span-2">
-            {% if graficos.mapa %}{{ graficos.mapa|safe }}{% else %}
+            {% if graficos.mapa %}{{ graficos.mapa|safe }}{% elif mensagem_sem_registros %}
                 <p class="p-8 text-center font-semibold text-[#78716C]">{{ mensagem_sem_registros }}</p>
+            {% else %}
+                <p class="p-8 text-center font-semibold text-[#78716C]">Sem coordenadas válidas para exibir o mapa.</p>
             {% endif %}
         </article>
     </section>
