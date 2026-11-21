@@ -17,35 +17,94 @@
     </style>
 </head>
 <body class="min-h-screen bg-stone-100 text-[#1C1C1C]">
-    <header class="border-b-4 border-[#C9A227] bg-gradient-to-r from-[#1C1C1C] to-[#7A0C14] text-white shadow-lg">
-        <div class="mx-auto flex max-w-screen-2xl flex-wrap items-center justify-between gap-5 px-4 py-5 sm:px-6 lg:px-8">
-            <div class="flex min-w-0 items-center gap-4">
-                <img class="h-14 w-14 shrink-0 rounded-full bg-white object-contain p-1" src="{% static 'painel/brasao.png' %}" alt="Brasão APMCB">
-                <div class="min-w-0">
-                    <p class="text-[0.65rem] font-bold uppercase tracking-widest text-[#C9A227] sm:text-xs">POLÍCIA MILITAR DA PARAÍBA · APMCB</p>
-                    <h1 class="mt-1 text-lg font-extrabold leading-tight sm:text-2xl">Painel de Acidentes nas Rodovias Federais - 2026</h1>
-                    <p class="mt-1 text-xs text-stone-200 sm:text-sm">Fonte: PRF - Dados Abertos (jan a set/2026)</p>
-                </div>
+    <div class="min-h-screen md:flex">
+        <aside class="w-full border-b-[3px] border-[#C9A227] bg-[#1C1C1C] text-white md:sticky md:top-0 md:flex md:h-screen md:w-64 md:shrink-0 md:flex-col md:overflow-y-auto md:border-b-0 md:border-r-[3px]"
+               aria-label="Menu principal">
+            <div class="hidden flex-col items-center px-4 pt-6 md:flex">
+                <img class="h-20 w-20 rounded-full bg-white object-contain p-1" src="{% static 'painel/brasao.png' %}" alt="Brasão APMCB">
+                <p class="mt-3 text-xs font-bold uppercase tracking-widest text-[#C9A227]">PMPB · APMCB</p>
             </div>
-            <aside class="min-w-56 rounded-lg border border-white/20 bg-black/10 px-4 py-3 text-sm sm:text-right" aria-label="Recorte atual">
-                <p class="mb-1 text-xs font-bold uppercase tracking-widest text-[#C9A227]">Recorte atual</p>
-                <p><span class="text-stone-300">UF:</span> {{ recorte.uf }} <span class="mx-1 text-white/40">·</span> <span class="text-stone-300">BR:</span> {{ recorte.br }}</p>
-                <p class="truncate"><span class="text-stone-300">Município:</span> {{ recorte.municipio }}</p>
-                <p><span class="text-stone-300">Período:</span> {{ recorte.periodo }}</p>
-            </aside>
-        </div>
-        <nav class="overflow-x-auto border-t border-white/10" aria-label="Navegação principal">
-            <div class="mx-auto flex min-w-max max-w-screen-2xl gap-6 px-4 sm:px-6 lg:px-8">
-                <a class="border-b-2 py-3 text-sm font-semibold {% if nav_active == 'home' %}border-[#C9A227] text-[#C9A227]{% else %}border-transparent text-white/80 hover:text-[#C9A227]{% endif %}" href="{% url 'home' %}{% if query_string %}?{{ query_string }}{% endif %}">Início</a>
+            <nav class="flex gap-2 overflow-x-auto px-3 py-3 md:block md:space-y-1 md:overflow-visible md:px-3 md:py-6"
+                 aria-label="Navegação principal">
+                <a class="flex shrink-0 items-center gap-3 rounded-full border-l-0 px-4 py-2.5 text-left text-sm font-semibold text-white transition md:w-full md:rounded-lg md:py-3 md:border-l-4 {% if nav_active == 'home' %}bg-[#C8102E] font-bold md:border-l-[#C9A227]{% else %}bg-transparent md:border-l-transparent hover:bg-[#7A0C14] md:hover:translate-x-1{% endif %}"
+                   href="{% url 'home' %}{% if query_string %}?{{ query_string }}{% endif %}">
+                    <svg class="h-5 w-5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="m3 10 9-7 9 7M5 9v12h14V9M9 21v-7h6v7"/>
+                    </svg>
+                    <span class="flex-1">Início</span>
+                </a>
                 {% for item in indicadores_menu %}
-                    <a class="border-b-2 py-3 text-sm font-semibold {% if nav_active == item.chave %}border-[#C9A227] text-[#C9A227]{% else %}border-transparent text-white/80 hover:text-[#C9A227]{% endif %}" href="{% url 'indicador' item.chave %}{% if query_string %}?{{ query_string }}{% endif %}">{{ item.nome }}</a>
+                    <a class="flex shrink-0 items-center gap-3 rounded-full border-l-0 px-4 py-2.5 text-left text-sm font-semibold text-white transition md:w-full md:rounded-lg md:py-3 md:border-l-4 {% if nav_active == item.chave %}bg-[#C8102E] font-bold md:border-l-[#C9A227]{% else %}bg-transparent md:border-l-transparent hover:bg-[#7A0C14] md:hover:translate-x-1{% endif %}"
+                       href="{% url 'indicador' item.chave %}{% if query_string %}?{{ query_string }}{% endif %}">
+                        <svg class="h-5 w-5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                            {% if item.chave == "acidentes" %}
+                                <path d="M3 13.5h18l-1.6-5a2 2 0 0 0-1.9-1.4H7.5a2 2 0 0 0-1.9 1.4L4 13.5v5h2v-2h12v2h2zM6 13.5l1.5-4h9l1.5 4M7.5 16.5h.01M16.5 16.5h.01"/>
+                            {% elif item.chave == "mortos" %}
+                                <path d="M10 3h4v7h7v4h-7v7h-4v-7H3v-4h7z"/>
+                            {% elif item.chave == "feridos_graves" %}
+                                <path d="M3 7h12v11H3zM15 11h3l3 3v4h-6zM8 10v5M5.5 12.5h5M7 18v2M18 18v2"/>
+                            {% elif item.chave == "feridos_leves" %}
+                                <path d="m5 17 12-12a2.8 2.8 0 0 1 4 4L9 21a2.8 2.8 0 0 1-4-4Z"/>
+                                <path d="m9 9 6 6M7.5 15.5h.01M16.5 8.5h.01"/>
+                            {% elif item.chave == "veiculos" %}
+                                <path d="M2 7h12v11H2zM14 11h4l4 4v3h-8zM6 18v2M18 18v2M5 10h6"/>
+                                <circle cx="6" cy="18" r="1.5"/><circle cx="18" cy="18" r="1.5"/>
+                            {% elif item.chave == "gravidade" %}
+                                <path d="m12 3 10 18H2L12 3Z"/>
+                                <path d="M12 9v5M12 17h.01"/>
+                            {% endif %}
+                        </svg>
+                        <span class="flex-1">{{ item.nome }}</span>
+                        {% for cartao in cartoes %}
+                            {% if cartao.chave == item.chave %}
+                                <span class="rounded-full bg-white/15 px-2 py-0.5 text-xs font-semibold">{{ cartao.valor }}</span>
+                            {% endif %}
+                        {% endfor %}
+                        {% for kpi in kpis %}
+                            {% if kpi.nome == item.nome %}
+                                <span class="rounded-full bg-white/15 px-2 py-0.5 text-xs font-semibold">{{ kpi.valor }}</span>
+                            {% endif %}
+                        {% endfor %}
+                        {% if slug == item.chave and valor_total %}
+                            <span class="rounded-full bg-white/15 px-2 py-0.5 text-xs font-semibold">{{ valor_total }}</span>
+                        {% endif %}
+                    </a>
                 {% endfor %}
-                <a class="border-b-2 py-3 text-sm font-semibold {% if nav_active == 'painel' %}border-[#C9A227] text-[#C9A227]{% else %}border-transparent text-white/80 hover:text-[#C9A227]{% endif %}" href="{% url 'painel' %}{% if query_string %}?{{ query_string }}{% endif %}">Painel completo</a>
-            </div>
-        </nav>
-    </header>
+                <div class="shrink-0 border-l border-[#C9A227] pl-2 md:mt-4 md:border-l-0 md:border-t md:pl-0 md:pt-4">
+                    <a class="flex items-center gap-3 rounded-full border-l-0 px-4 py-2.5 text-left text-sm font-semibold text-white transition md:w-full md:rounded-lg md:py-3 md:border-l-4 {% if nav_active == 'painel' %}bg-[#C8102E] font-bold md:border-l-[#C9A227]{% else %}bg-transparent md:border-l-transparent hover:bg-[#7A0C14] md:hover:translate-x-1{% endif %}"
+                       href="{% url 'painel' %}{% if query_string %}?{{ query_string }}{% endif %}">
+                        <svg class="h-5 w-5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                            <rect x="3" y="3" width="8" height="8" rx="1"/>
+                            <rect x="13" y="3" width="8" height="5" rx="1"/>
+                            <rect x="13" y="10" width="8" height="11" rx="1"/>
+                            <rect x="3" y="13" width="8" height="8" rx="1"/>
+                        </svg>
+                        <span>Painel completo</span>
+                    </a>
+                </div>
+            </nav>
+        </aside>
+        <div class="min-w-0 flex-1">
+            <header class="border-b-4 border-[#C9A227] bg-gradient-to-r from-[#1C1C1C] to-[#7A0C14] text-white shadow-lg">
+                <div class="mx-auto flex max-w-screen-2xl flex-wrap items-center justify-between gap-5 px-4 py-5 sm:px-6 lg:px-8">
+                    <div class="flex min-w-0 items-center gap-4">
+                        <img class="h-14 w-14 shrink-0 rounded-full bg-white object-contain p-1" src="{% static 'painel/brasao.png' %}" alt="Brasão APMCB">
+                        <div class="min-w-0">
+                            <p class="text-[0.65rem] font-bold uppercase tracking-widest text-[#C9A227] sm:text-xs">POLÍCIA MILITAR DA PARAÍBA · APMCB</p>
+                            <h1 class="mt-1 text-lg font-extrabold leading-tight sm:text-2xl">Painel de Acidentes nas Rodovias Federais - 2026</h1>
+                            <p class="mt-1 text-xs text-stone-200 sm:text-sm">Fonte: PRF - Dados Abertos (jan a set/2026)</p>
+                        </div>
+                    </div>
+                    <aside class="min-w-56 rounded-lg border border-white/20 bg-black/10 px-4 py-3 text-sm sm:text-right" aria-label="Recorte atual">
+                        <p class="mb-1 text-xs font-bold uppercase tracking-widest text-[#C9A227]">Recorte atual</p>
+                        <p><span class="text-stone-300">UF:</span> {{ recorte.uf }} <span class="mx-1 text-white/40">·</span> <span class="text-stone-300">BR:</span> {{ recorte.br }}</p>
+                        <p class="truncate"><span class="text-stone-300">Município:</span> {{ recorte.municipio }}</p>
+                        <p><span class="text-stone-300">Período:</span> {{ recorte.periodo }}</p>
+                    </aside>
+                </div>
+            </header>
 
-    <main class="mx-auto max-w-screen-2xl px-4 py-6 sm:px-6 lg:px-8">
+            <main class="mx-auto max-w-screen-2xl px-4 py-6 sm:px-6 lg:px-8">
         <section class="mb-6 rounded-xl border border-stone-200 border-t-[3px] border-t-[#1C1C1C] bg-white p-5 shadow-sm" aria-labelledby="filtros-titulo">
             <div class="mb-4 flex flex-wrap items-end justify-between gap-3">
                 <div>
@@ -174,6 +233,8 @@
             <p class="mt-2"><span class="font-semibold">Regras dos KPIs:</span> Acidentes = contagem de linhas (id); Mortos = soma de mortos; Feridos graves = soma de feridos_graves; Feridos leves = soma de feridos_leves; Veículos = soma de veiculos; Gravidade = mortos ÷ acidentes × 100 (mortos por 100 acidentes).</p>
         </div>
     </footer>
+        </div>
+    </div>
 
     {{ brs_por_uf|json_script:"brs-por-uf" }}
     {{ municipios_por_uf|json_script:"municipios-por-uf" }}

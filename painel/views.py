@@ -503,7 +503,7 @@ def _grafico_rosca(df, coluna, titulo):
     return _aplicar_tema(figura)
 
 
-def _grafico_mapa(df):
+def _grafico_mapa(df, filtros=None):
     pontos = df.dropna(subset=["latitude", "longitude"]).copy()
     pontos = pontos.loc[
         pontos["latitude"].between(-90, 90)
@@ -516,30 +516,76 @@ def _grafico_mapa(df):
     if pontos.empty:
         return None
 
+    pontos["localidade_hover"] = (
+        pontos["municipio"].astype("string") + " - " + pontos["uf"].astype("string")
+    )
+    pontos["br_hover"] = pontos["br"].map(
+        lambda valor: f"BR-{int(valor)}" if pd.notna(valor) else "BR não informada"
+    )
+    pontos["km_hover"] = pontos["km"].map(
+        lambda valor: f"km {valor:.1f}".replace(".", ",")
+        if pd.notna(valor)
+        else "km não informado"
+    )
+    pontos["trecho_hover"] = pontos["br_hover"] + ", " + pontos["km_hover"]
+    datas = pontos["data_inversa"].dt.strftime("%d/%m/%Y").fillna("Data não informada")
+    horarios = pontos["horario"].astype("string").fillna("Horário não informado")
+    pontos["data_hora_hover"] = datas + " " + horarios
+    centro = {
+        "lat": float(pontos["latitude"].mean()),
+        "lon": float(pontos["longitude"].mean()),
+    }
+    filtros = filtros or {}
+    zoom = 9 if filtros.get("municipio") else 6 if filtros.get("uf") else 3.3
+
     figura = px.scatter_map(
         pontos,
         lat="latitude",
         lon="longitude",
         color="classificacao_acidente",
         color_discrete_map=CORES_CLASSIFICACAO,
-        hover_name="municipio",
-        hover_data={
-            "id": True,
-            "uf": True,
-            "br": True,
-            "km": ":.1f",
-            "mortos": True,
-            "latitude": False,
-            "longitude": False,
+        category_orders={
+            "classificacao_acidente": [
+                "Com Vítimas Fatais",
+                "Com Vítimas Feridas",
+                "Sem Vítimas",
+            ]
         },
-        map_style="open-street-map",
-        center={"lat": -14.2, "lon": -51.9},
-        zoom=3,
+        hover_name="localidade_hover",
+        custom_data=[
+            "trecho_hover",
+            "data_hora_hover",
+            "causa_acidente",
+            "tipo_acidente",
+            "classificacao_acidente",
+            "mortos",
+            "feridos",
+        ],
+        labels={"classificacao_acidente": "Classificação"},
+        map_style="carto-positron",
+        center=centro,
+        zoom=zoom,
         opacity=0.7,
         title=titulo,
     )
-    figura.update_traces(marker={"size": 8})
-    figura.update_layout(height=600, margin={"l": 0, "r": 0, "t": 55, "b": 0})
+    figura.update_traces(
+        marker={"size": 8},
+        hovertemplate=(
+            "<b>%{hovertext}</b><br>"
+            "%{customdata[0]}<br>"
+            "Data e hora: %{customdata[1]}<br>"
+            "Causa: %{customdata[2]}<br>"
+            "Tipo: %{customdata[3]}<br>"
+            "Classificação: %{customdata[4]}<br>"
+            "Mortos: %{customdata[5]} | Feridos: %{customdata[6]}"
+            "<extra></extra>"
+        ),
+    )
+    figura.update_layout(
+        height=600,
+        legend_title_text="Classificação",
+        margin={"l": 0, "r": 0, "t": 55, "b": 0},
+    )
     return _aplicar_tema(figura)
 
 
@@ -582,7 +628,7 @@ def _preparar_tabelas(df):
 
 
 def _gerar_graficos(df, periodos, filtros):
-    mapa = _grafico_mapa(df)
+    mapa = _grafico_mapa(df, filtros)
     if filtros["uf"]:
         contagens_ranking = df["br"].dropna().astype(int).value_counts()
         contagens_ranking.index = [
@@ -768,6 +814,7 @@ def indicador(request, slug):
     else:
         coluna_ranking = "br" if filtros["uf"] else "uf"
         nome_ranking = "BR" if filtros["uf"] else "UF"
+        mapa = _grafico_mapa(filtrado, filtros)
         graficos = {
             "mensal": _figura_div(
                 _grafico_mensal_indicador(filtrado, periodos, slug)
@@ -790,6 +837,7 @@ def indicador(request, slug):
                 )
             ),
             "calor": _figura_div(_grafico_calor_indicador(filtrado, slug)),
+            "mapa": _figura_div(mapa) if mapa is not None else None,
         }
         tabela_trechos, tabela_municipios = _tabelas_indicador(filtrado, slug)
         mensagem_sem_registros = ""

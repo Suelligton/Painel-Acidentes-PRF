@@ -103,6 +103,46 @@ class CamadaDadosTests(SimpleTestCase):
         )
         self.assertIsNone(_grafico_mapa(dados_sem_pontos_validos))
 
+    def test_mapa_usa_centro_escala_legenda_e_hover_localizados(self):
+        dados_mapa = pd.concat(
+            [
+                self.dados,
+                self.dados.iloc[[1]].assign(
+                    classificacao_acidente="Sem Vítimas"
+                ),
+            ],
+            ignore_index=True,
+        )
+        figura = _grafico_mapa(dados_mapa)
+
+        self.assertEqual(figura.layout.map.style, "carto-positron")
+        self.assertAlmostEqual(
+            figura.layout.map.center.lat, dados_mapa["latitude"].mean()
+        )
+        self.assertAlmostEqual(
+            figura.layout.map.center.lon, dados_mapa["longitude"].mean()
+        )
+        self.assertEqual(figura.layout.map.zoom, 3.3)
+        self.assertEqual(
+            [traco.name for traco in figura.data],
+            ["Com Vítimas Fatais", "Com Vítimas Feridas", "Sem Vítimas"],
+        )
+        self.assertEqual(figura.layout.legend.title.text, "Classificação")
+        hovertemplate = figura.data[0].hovertemplate
+        self.assertIn("Data e hora:", hovertemplate)
+        self.assertIn("Mortos:", hovertemplate)
+        self.assertIn("<extra></extra>", hovertemplate)
+        self.assertIn("BR-230, km 146,1", [linha[0] for linha in figura.data[0].customdata])
+
+        self.assertEqual(_grafico_mapa(dados_mapa, {"uf": "TO"}).layout.map.zoom, 6)
+        self.assertEqual(
+            _grafico_mapa(
+                dados_mapa,
+                {"uf": "TO", "municipio": "ARAGUAINA"},
+            ).layout.map.zoom,
+            9,
+        )
+
 
 class RotasPainelTests(SimpleTestCase):
     def setUp(self):
