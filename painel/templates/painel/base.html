@@ -16,14 +16,23 @@
         .plotly-graph-div { width: 100% !important; }
     </style>
 </head>
-<body class="min-h-screen bg-[#F5F5F4] text-[#1C1C1C]">
-    <header class="bg-[#1C1C1C] text-white shadow-lg">
-        <div class="mx-auto flex max-w-screen-2xl items-center gap-4 px-4 py-5 sm:px-6 lg:px-8">
-            <img class="h-12 w-12 rounded-full bg-white object-contain p-1" src="{% static 'painel/brasao.png' %}" alt="">
-            <div>
-                <p class="text-xs font-bold uppercase tracking-[0.2em] text-[#C9A227]">PMPB · Dados abertos</p>
-                <h1 class="mt-1 text-xl font-extrabold sm:text-2xl">Acidentes em rodovias federais</h1>
+<body class="min-h-screen bg-stone-100 text-[#1C1C1C]">
+    <header class="border-b-4 border-[#C9A227] bg-gradient-to-r from-[#1C1C1C] to-[#7A0C14] text-white shadow-lg">
+        <div class="mx-auto flex max-w-screen-2xl flex-wrap items-center justify-between gap-5 px-4 py-5 sm:px-6 lg:px-8">
+            <div class="flex min-w-0 items-center gap-4">
+                <img class="h-14 w-14 shrink-0 rounded-full bg-white object-contain p-1" src="{% static 'painel/brasao.png' %}" alt="Brasão APMCB">
+                <div class="min-w-0">
+                    <p class="text-[0.65rem] font-bold uppercase tracking-widest text-[#C9A227] sm:text-xs">POLÍCIA MILITAR DA PARAÍBA · APMCB</p>
+                    <h1 class="mt-1 text-lg font-extrabold leading-tight sm:text-2xl">Painel de Acidentes nas Rodovias Federais - 2026</h1>
+                    <p class="mt-1 text-xs text-stone-200 sm:text-sm">Fonte: PRF - Dados Abertos (jan a set/2026)</p>
+                </div>
             </div>
+            <aside class="min-w-56 rounded-lg border border-white/20 bg-black/10 px-4 py-3 text-sm sm:text-right" aria-label="Recorte atual">
+                <p class="mb-1 text-xs font-bold uppercase tracking-widest text-[#C9A227]">Recorte atual</p>
+                <p><span class="text-stone-300">UF:</span> {{ recorte.uf }} <span class="mx-1 text-white/40">·</span> <span class="text-stone-300">BR:</span> {{ recorte.br }}</p>
+                <p class="truncate"><span class="text-stone-300">Município:</span> {{ recorte.municipio }}</p>
+                <p><span class="text-stone-300">Período:</span> {{ recorte.periodo }}</p>
+            </aside>
         </div>
         <nav class="overflow-x-auto border-t border-white/10" aria-label="Navegação principal">
             <div class="mx-auto flex min-w-max max-w-screen-2xl gap-6 px-4 sm:px-6 lg:px-8">
@@ -37,7 +46,7 @@
     </header>
 
     <main class="mx-auto max-w-screen-2xl px-4 py-6 sm:px-6 lg:px-8">
-        <section class="mb-6 rounded-xl border border-stone-200 bg-white p-5 shadow-sm" aria-labelledby="filtros-titulo">
+        <section class="mb-6 rounded-xl border border-stone-200 border-t-[3px] border-t-[#1C1C1C] bg-white p-5 shadow-sm" aria-labelledby="filtros-titulo">
             <div class="mb-4 flex flex-wrap items-end justify-between gap-3">
                 <div>
                     <p class="text-xs font-bold uppercase tracking-[0.16em] text-[#78716C]">Explore os dados</p>
@@ -145,10 +154,26 @@
                     <a class="rounded-lg bg-[#1C1C1C] px-4 py-2.5 text-sm font-bold text-white hover:bg-[#7A0C14]" href="{% url 'exportar_csv' %}{% if query_string %}?{{ query_string }}{% endif %}">Baixar CSV</a>
                 </div>
             </form>
+            <div class="mt-5 border-t border-stone-200 pt-4">
+                <p class="mb-2 text-xs font-bold uppercase tracking-widest text-[#78716C]">Atalhos rápidos</p>
+                <div class="flex flex-wrap gap-2">
+                    <a class="rounded-lg border border-[#C9A227] bg-white px-3 py-2 text-sm font-semibold text-[#1C1C1C] transition hover:bg-amber-50" href="{{ request.path }}?uf=PB">Paraíba</a>
+                    <a class="rounded-lg border border-[#C9A227] bg-white px-3 py-2 text-sm font-semibold text-[#1C1C1C] transition hover:bg-amber-50" href="{{ request.path }}?uf=PB&amp;br=230">BR-230 na PB</a>
+                    <a class="rounded-lg border border-[#C9A227] bg-white px-3 py-2 text-sm font-semibold text-[#1C1C1C] transition hover:bg-amber-50" href="{{ request.path }}?uf=PB&amp;municipio=JOAO+PESSOA">João Pessoa</a>
+                    <a class="rounded-lg border border-[#C9A227] bg-white px-3 py-2 text-sm font-semibold text-[#1C1C1C] transition hover:bg-amber-50" href="{{ request.path }}?uf=PB&amp;municipio=CAMPINA+GRANDE">Campina Grande</a>
+                </div>
+            </div>
         </section>
 
         {% block conteudo %}{% endblock %}
     </main>
+
+    <footer class="mt-10 border-t border-stone-300 bg-white">
+        <div class="mx-auto max-w-screen-2xl px-4 py-6 text-sm text-[#57534E] sm:px-6 lg:px-8">
+            <p class="font-semibold text-[#1C1C1C]">Fonte: PRF - Dados Abertos (jan a set/2026).</p>
+            <p class="mt-2"><span class="font-semibold">Regras dos KPIs:</span> Acidentes = contagem de linhas (id); Mortos = soma de mortos; Feridos graves = soma de feridos_graves; Feridos leves = soma de feridos_leves; Veículos = soma de veiculos; Gravidade = mortos ÷ acidentes × 100 (mortos por 100 acidentes).</p>
+        </div>
+    </footer>
 
     {{ brs_por_uf|json_script:"brs-por-uf" }}
     {{ municipios_por_uf|json_script:"municipios-por-uf" }}

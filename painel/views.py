@@ -645,8 +645,31 @@ def _preparar_kpis(df, incluir_chave=False):
 def _contexto_comum(request, df, filtros, filtrado, pagina_atual):
     ufs, brs_por_uf, municipios_por_uf = _opcoes_dependentes(df)
     meses = _periodos(df)
+    periodo_inicio = (
+        _rotulo_periodo(filtros["mes_ini"]) if filtros["mes_ini"] else ""
+    )
+    periodo_fim = _rotulo_periodo(filtros["mes_fim"]) if filtros["mes_fim"] else ""
+    if periodo_inicio and periodo_fim:
+        periodo_recorte = (
+            periodo_inicio
+            if periodo_inicio == periodo_fim
+            else f"{periodo_inicio} a {periodo_fim}"
+        )
+    elif periodo_inicio:
+        periodo_recorte = f"A partir de {periodo_inicio}"
+    elif periodo_fim:
+        periodo_recorte = f"Até {periodo_fim}"
+    else:
+        periodo_recorte = "Todo o período"
+
     return {
         "filtros": filtros,
+        "recorte": {
+            "uf": filtros["uf"] or "Todas",
+            "br": f"BR-{filtros['br']}" if filtros["br"] else "Todas",
+            "municipio": filtros["municipio"] or "Todos",
+            "periodo": periodo_recorte,
+        },
         "query_string": request.GET.urlencode(),
         "nav_active": pagina_atual,
         "indicadores_menu": [
