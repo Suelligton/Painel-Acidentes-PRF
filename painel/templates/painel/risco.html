@@ -14,13 +14,19 @@
                 <h3 class="font-bold text-[#1C1C1C]">{{ cartao.titulo }}</h3>
                 <p class="mt-1 text-xs text-[#78716C]">{{ cartao.descricao }}</p>
                 {% if cartao.valor %}
-                    <p class="mt-4 text-3xl font-extrabold text-[#C8102E]">{{ cartao.valor }}</p>
+                    <p class="count-up mt-4 text-xl font-extrabold text-[#C8102E] sm:text-3xl"
+                       data-count-up
+                       data-count-target="{{ cartao.valor_animacao|default_if_none:'' }}"
+                       data-count-decimals="2">{{ cartao.valor }}</p>
                 {% else %}
-                    <div class="mt-4 grid {% if cartao.comparacoes|length == 3 %}grid-cols-3{% else %}grid-cols-2{% endif %} gap-2">
+                    <div class="mt-4 grid {% if cartao.comparacoes|length == 3 %}grid-cols-2 sm:grid-cols-3{% else %}grid-cols-2{% endif %} gap-2">
                         {% for comparacao in cartao.comparacoes %}
                             <div>
                                 <p class="text-xs font-semibold text-[#78716C]">{{ comparacao.rotulo }}</p>
-                                <p class="mt-1 text-lg font-extrabold text-[#C8102E]">{{ comparacao.valor }}</p>
+                                <p class="count-up mt-1 text-base font-extrabold text-[#C8102E] sm:text-lg"
+                                   data-count-up
+                                   data-count-target="{{ comparacao.valor_animacao|default_if_none:'' }}"
+                                   data-count-decimals="2">{{ comparacao.valor }}</p>
                             </div>
                         {% endfor %}
                     </div>
@@ -117,13 +123,13 @@
         </article>
 
         <article class="min-w-0 rounded-xl border border-stone-200 border-t-[3px] border-t-[#1C1C1C] bg-white p-4 shadow-sm xl:col-span-2">
-            <h3 class="font-bold text-[#1C1C1C]">Mapa de concentração de acidentes graves</h3>
-            <p class="mb-2 mt-1 text-xs text-[#78716C]">Densidade ponderada pela severidade dos acidentes com vítimas fatais ou feridas.</p>
-            <div class="min-h-[520px] w-full">
+            <h3 class="font-bold text-[#1C1C1C]">Trechos críticos (bolhas por UPS)</h3>
+            <div class="w-full">
                 {% if graficos_risco.mapa %}{{ graficos_risco.mapa|safe }}{% else %}
-                    <p class="p-8 text-center text-sm font-semibold text-[#78716C]">{{ mensagem_mapa }}</p>
+                    <p class="min-h-[560px] p-8 text-center text-sm font-semibold text-[#78716C]">{{ mensagem_mapa }}</p>
                 {% endif %}
             </div>
+            <p class="mt-2 text-xs text-[#78716C]">Cada bolha é um trecho de 10 km. Quanto maior e mais vermelha, mais graves os acidentes.</p>
         </article>
     </section>
 {% endblock %}

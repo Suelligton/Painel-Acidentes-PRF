@@ -1,12 +1,15 @@
+import json
 import textwrap
 from io import StringIO
 
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
+import plotly.io as pio
 from django.http import Http404, HttpResponse
 from django.shortcuts import render
 from plotly.offline import get_plotlyjs, plot
+from plotly.utils import PlotlyJSONEncoder
 from plotly.subplots import make_subplots
 
 from .dados import INDICADORES, MESES_NOME, calcular_kpi, carregar_dados
@@ -27,7 +30,20 @@ CORES_CLASSIFICACAO = {
     "NÃO INFORMADO": CORES_PMPB["preto"],
 }
 
+CORES_MAPA_HOME = {
+    "Com Vítimas Fatais": "#DC2626",
+    "Com Vítimas Feridas": "#F59E0B",
+    "Sem Vítimas": "#A8A29E",
+    "NÃO INFORMADO": CORES_PMPB["cinza"],
+}
+
 CONFIG_GRAFICO_HOME = {"displayModeBar": False, "displaylogo": False}
+TEMPLATES_PLOTLY = {
+    nome: json.loads(
+        PlotlyJSONEncoder().encode(pio.templates[nome].to_plotly_json())
+    )
+    for nome in ("plotly_dark", "plotly_white")
+}
 PESOS_UPS = {
     "Sem Vítimas": 1,
     "Com Vítimas Feridas": 5,
@@ -208,9 +224,10 @@ def _periodos_filtrados(df, filtros):
     ]
 
 
-def _aplicar_tema(figura):
+def aplicar_tema(figura):
     figura.update_layout(
         template="plotly_white",
+        title=None,
         font={"family": "Inter, sans-serif", "color": CORES_PMPB["preto"]},
         colorway=[
             CORES_PMPB["vermelho"],
@@ -222,12 +239,30 @@ def _aplicar_tema(figura):
         separators=",.",
         paper_bgcolor="white",
         plot_bgcolor="white",
-        margin={"l": 24, "r": 24, "t": 55, "b": 35},
+        legend={
+            "orientation": "h",
+            "yanchor": "top",
+            "y": -0.18,
+            "xanchor": "center",
+            "x": 0.5,
+        },
+        hoverlabel={
+            "bgcolor": CORES_PMPB["preto"],
+            "font": {"color": "white", "family": "Inter, sans-serif"},
+        },
+    )
+    figura.update_xaxes(showgrid=False)
+    figura.update_yaxes(
+        showgrid=True,
+        gridcolor="#E7E5E4",
+        gridwidth=1,
+        zeroline=False,
     )
     return figura
 
 
 def _figura_div(figura, config=None):
+    aplicar_tema(figura)
     return plot(
         figura,
         output_type="div",
@@ -236,53 +271,83 @@ def _figura_div(figura, config=None):
     )
 
 
-def _grafico_mensal(df, periodos):
+def _grafico_evolucao_mensal(df, periodos, altura):
+    if df.empty or not periodos:
+        return None
+
     mensal = (
         df.assign(periodo=df["data"].dt.strftime("%Y-%m"))
         .groupby("periodo")
         .agg(acidentes=("id", "size"), mortos=("mortos", "sum"))
         .reindex(periodos, fill_value=0)
-        .rename_axis("periodo")
-        .reset_index()
     )
-    longo = mensal.melt(
-        id_vars="periodo",
-        value_vars=["acidentes", "mortos"],
-        var_name="indicador",
-        value_name="valor",
-    )
-    longo["indicador"] = longo["indicador"].map(
-        {"acidentes": "Acidentes", "mortos": "Mortos"}
-    )
-    longo["mes"] = longo["periodo"].map(_rotulo_periodo)
     rotulos = [_rotulo_periodo(periodo) for periodo in periodos]
+    figura = make_subplots(specs=[[{"secondary_y": True}]])
+    figura.add_trace(
+        go.Scatter(
+            x=rotulos,
+            y=mensal["acidentes"],
+            name="Acidentes",
+            mode="lines",
+            line={"color": CORES_PMPB["dourado"], "width": 2},
+            fill="tozeroy",
+            fillgradient={
+                "type": "vertical",
+                "colorscale": [
+                    [0, "rgba(201,162,39,0.06)"],
+                    [1, "rgba(201,162,39,0.45)"],
+                ],
+            },
+            hovertemplate="%{x}<br>Acidentes: %{y:,.0f}<extra></extra>",
+        ),
+        secondary_y=False,
+    )
+    figura.add_trace(
+        go.Scatter(
+            x=rotulos,
+            y=mensal["mortos"],
+            name="Mortos",
+            mode="lines+markers",
+            line={"color": CORES_PMPB["vermelho"], "width": 2.5},
+            marker={"size": 6},
+            hovertemplate="%{x}<br>Mortos: %{y:,.0f}<extra></extra>",
+        ),
+        secondary_y=True,
+    )
+    figura.add_annotation(
+        x=rotulos[-1],
+        y=mensal["acidentes"].iloc[-1],
+        text=_formatar_inteiro(mensal["acidentes"].iloc[-1]),
+        showarrow=False,
+        xanchor="right",
+        yanchor="bottom",
+        yshift=10,
+        font={"color": CORES_PMPB["dourado"], "size": 11},
+    )
+    figura.add_annotation(
+        x=rotulos[-1],
+        y=mensal["mortos"].iloc[-1],
+        yref="y2",
+        text=_formatar_inteiro(mensal["mortos"].iloc[-1]),
+        showarrow=False,
+        xanchor="right",
+        yanchor="top",
+        yshift=-10,
+        font={"color": CORES_PMPB["vermelho"], "size": 11},
+    )
+    figura.update_xaxes(title_text="", tickangle=-15)
+    figura.update_yaxes(title_text="", rangemode="tozero", secondary_y=False)
+    figura.update_yaxes(title_text="", rangemode="tozero", secondary_y=True)
+    figura.update_layout(
+        height=altura,
+        hovermode="x unified",
+        margin={"l": 28, "r": 28, "t": 18, "b": 60},
+    )
+    return aplicar_tema(figura)
 
-    figura = px.line(
-        longo,
-        x="mes",
-        y="valor",
-        color="indicador",
-        facet_col="indicador",
-        facet_col_wrap=1,
-        markers=True,
-        category_orders={
-            "indicador": ["Acidentes", "Mortos"],
-            "mes": rotulos,
-        },
-        color_discrete_map={
-            "Acidentes": CORES_PMPB["vermelho"],
-            "Mortos": CORES_PMPB["vermelho_escuro"],
-        },
-        title="Evolução mensal de acidentes e mortos",
-        template="plotly_white",
-    )
-    figura.update_yaxes(matches=None, rangemode="tozero", title_text="")
-    figura.update_xaxes(title_text="", tickangle=-25)
-    figura.for_each_annotation(
-        lambda anotacao: anotacao.update(text=anotacao.text.split("=")[-1])
-    )
-    figura.update_layout(showlegend=False, height=610)
-    return _aplicar_tema(figura)
+
+def _grafico_mensal(df, periodos):
+    return _grafico_evolucao_mensal(df, periodos, 380)
 
 
 def _quebrar_rotulo_barras(rotulo):
@@ -329,7 +394,7 @@ def _figura_barras(contagens, titulo, cor, altura_minima=300):
         cliponaxis=False,
         hovertemplate="%{customdata[0]}<br>Acidentes: %{x:,.0f}<extra></extra>",
     )
-    figura = _aplicar_tema(figura)
+    figura = aplicar_tema(figura)
     figura.update_layout(
         xaxis_title="Acidentes",
         yaxis_title="",
@@ -399,6 +464,7 @@ def _grafico_sparkline(periodos, valores, cor):
     figura.update_layout(
         template="plotly_white",
         height=40,
+        font={"family": "Inter, sans-serif"},
         margin={"l": 0, "r": 0, "t": 0, "b": 0},
         paper_bgcolor="rgba(0,0,0,0)",
         plot_bgcolor="rgba(0,0,0,0)",
@@ -413,96 +479,48 @@ def _formatar_variacao_home(valor):
     return f"{valor:,.1f}%".replace(",", "X").replace(".", ",").replace("X", ".")
 
 
+def _preparar_tendencia_home(df, periodos, chave):
+    valores = _serie_mensal_home(df, periodos, chave)
+    anterior = valores.iloc[-2] if len(valores) > 1 else None
+    atual = valores.iloc[-1] if len(valores) > 1 else None
+    tipo_variacao = "neutra"
+    variacao = "Sem comparação"
+
+    if anterior is not None and atual is not None:
+        if anterior == 0:
+            if atual > 0:
+                variacao = "Novo"
+                tipo_variacao = "piorou"
+            else:
+                variacao = "0,0%"
+        else:
+            percentual = (atual - anterior) / abs(anterior) * 100
+            variacao = _formatar_variacao_home(percentual)
+            if percentual > 0:
+                tipo_variacao = "piorou"
+            elif percentual < 0:
+                tipo_variacao = "melhorou"
+
+    cor = CORES_CARTOES_HOME[chave]
+    return {
+        "cor": cor,
+        "variacao": variacao,
+        "tipo_variacao": tipo_variacao,
+        "sparkline": _grafico_sparkline(periodos, valores, cor),
+    }
+
+
 def _preparar_cartoes_home(df, periodos):
     cartoes = _preparar_kpis(df, incluir_chave=True)
     for cartao in cartoes:
-        chave = cartao["chave"]
-        valores = _serie_mensal_home(df, periodos, chave)
-        anterior = valores.iloc[-2] if len(valores) > 1 else None
-        atual = valores.iloc[-1] if len(valores) > 1 else None
-        tipo_variacao = "neutra"
-        variacao = "Sem comparação"
-
-        if anterior is not None and atual is not None:
-            if anterior == 0:
-                if atual > 0:
-                    variacao = "Novo"
-                    tipo_variacao = "piorou"
-                else:
-                    variacao = "0,0%"
-            else:
-                percentual = (atual - anterior) / abs(anterior) * 100
-                variacao = _formatar_variacao_home(percentual)
-                if percentual > 0:
-                    tipo_variacao = "piorou"
-                elif percentual < 0:
-                    tipo_variacao = "melhorou"
-
-        cor = CORES_CARTOES_HOME[chave]
         cartao.update(
-            {
-                "cor": cor,
-                "variacao": variacao,
-                "tipo_variacao": tipo_variacao,
-                "sparkline": _grafico_sparkline(periodos, valores, cor),
-            }
+            _preparar_tendencia_home(df, periodos, cartao["chave"])
         )
     return cartoes
 
 
 def _grafico_evolucao_home(df, periodos):
-    if df.empty or not periodos:
-        return None
-
-    mensal = (
-        df.assign(periodo=df["data"].dt.strftime("%Y-%m"))
-        .groupby("periodo")
-        .agg(acidentes=("id", "size"), mortos=("mortos", "sum"))
-        .reindex(periodos, fill_value=0)
-    )
-    rotulos = [_rotulo_periodo(periodo) for periodo in periodos]
-    figura = make_subplots(specs=[[{"secondary_y": True}]])
-    figura.add_trace(
-        go.Bar(
-            x=rotulos,
-            y=mensal["acidentes"],
-            name="Acidentes",
-            marker_color=CORES_PMPB["cinza"],
-            hovertemplate="%{x}<br>Acidentes: %{y:,.0f}<extra></extra>",
-        ),
-        secondary_y=False,
-    )
-    figura.add_trace(
-        go.Scatter(
-            x=rotulos,
-            y=mensal["mortos"],
-            name="Mortos",
-            mode="lines+markers",
-            line={"color": CORES_PMPB["vermelho"], "width": 2.5},
-            marker={"size": 6},
-            hovertemplate="%{x}<br>Mortos: %{y:,.0f}<extra></extra>",
-        ),
-        secondary_y=True,
-    )
-    figura.update_layout(
-        template="plotly_white",
-        height=340,
-        margin={"l": 10, "r": 10, "t": 10, "b": 38},
-        separators=",.",
-        barmode="group",
-        legend={
-            "orientation": "h",
-            "yanchor": "top",
-            "y": -0.18,
-            "xanchor": "center",
-            "x": 0.5,
-        },
-        hovermode="x unified",
-    )
-    figura.update_xaxes(tickangle=-20, title_text="")
-    figura.update_yaxes(title_text="", rangemode="tozero", secondary_y=False)
-    figura.update_yaxes(title_text="", rangemode="tozero", secondary_y=True)
-    return figura
+    return _grafico_evolucao_mensal(df, periodos, 340)
 
 
 def _grafico_causas_home(df):
@@ -561,7 +579,7 @@ def _grafico_classificacao_home(df):
         showarrow=False,
         font={"size": 14, "color": CORES_PMPB["preto"]},
     )
-    return _aplicar_tema(figura)
+    return aplicar_tema(figura)
 
 
 def _grafico_ranking_home(df, filtros):
@@ -616,7 +634,7 @@ def _grafico_mapa_home(df, filtros):
         lat="latitude",
         lon="longitude",
         color="classificacao_acidente",
-        color_discrete_map=CORES_CLASSIFICACAO,
+        color_discrete_map=CORES_MAPA_HOME,
         category_orders={
             "classificacao_acidente": [
                 "Com Vítimas Fatais",
@@ -634,15 +652,15 @@ def _grafico_mapa_home(df, filtros):
             "mortos",
             "feridos",
         ],
-        map_style="carto-positron",
+        map_style="carto-darkmatter",
         center=centro,
         zoom=zoom,
-        opacity=0.7,
+        opacity=0.75,
         height=340,
         template="plotly_white",
     )
     figura.update_traces(
-        marker={"size": 7},
+        marker={"size": 5},
         hovertemplate=(
             "<b>%{hovertext}</b><br>"
             "%{customdata[0]}<br>"
@@ -659,7 +677,7 @@ def _grafico_mapa_home(df, filtros):
         showlegend=False,
         margin={"l": 10, "r": 10, "t": 10, "b": 10},
     )
-    return _aplicar_tema(figura)
+    return aplicar_tema(figura)
 
 
 def _rotulo_grupo(valor):
@@ -707,7 +725,7 @@ def _grafico_barras_indicador(df, coluna, chave, titulo, limite=10):
             + f": %{{x:,.{casas_decimais}f}}<extra></extra>"
         ),
     )
-    figura = _aplicar_tema(figura)
+    figura = aplicar_tema(figura)
     figura.update_layout(
         xaxis_title=INDICADORES[chave]["nome"],
         yaxis_title="",
@@ -716,33 +734,6 @@ def _grafico_barras_indicador(df, coluna, chave, titulo, limite=10):
     )
     figura.update_yaxes(automargin=True)
     return figura
-
-
-def _grafico_mensal_indicador(df, periodos, chave):
-    dados = df.assign(periodo=df["data"].dt.strftime("%Y-%m"))
-    valores = _serie_indicador(dados, "periodo", chave).reindex(periodos, fill_value=0)
-    tabela = valores.rename("valor").reset_index()
-    tabela["mes"] = tabela["periodo"].map(_rotulo_periodo)
-    rotulos = [_rotulo_periodo(periodo) for periodo in periodos]
-    figura = px.line(
-        tabela,
-        x="mes",
-        y="valor",
-        markers=True,
-        category_orders={"mes": rotulos},
-        title=f"Evolução mensal: {INDICADORES[chave]['nome']}",
-        color_discrete_sequence=[CORES_PMPB["vermelho"]],
-        template="plotly_white",
-    )
-    figura.update_traces(
-        line={"width": 3},
-        hovertemplate="%{x}<br>"
-        + INDICADORES[chave]["nome"]
-        + ": %{y:,.2f}<extra></extra>",
-    )
-    figura.update_yaxes(title_text=INDICADORES[chave]["nome"], rangemode="tozero")
-    figura.update_xaxes(title_text="Mês", tickangle=-25)
-    return _aplicar_tema(figura)
 
 
 def _grafico_calor_indicador(df, chave, filtros=None):
@@ -777,7 +768,7 @@ def _grafico_calor_indicador(df, chave, filtros=None):
         title=f"{INDICADORES[chave]['nome']} por dia da semana e hora",
         template="plotly_white",
     )
-    return _aplicar_tema(figura)
+    return aplicar_tema(figura)
 
 
 def _tabelas_indicador(df, chave):
@@ -853,7 +844,7 @@ def _grafico_calor(df, filtros=None):
     )
     figura.update_xaxes(title_text="Hora do dia")
     figura.update_yaxes(title_text="Dia da semana")
-    return _aplicar_tema(figura)
+    return aplicar_tema(figura)
 
 
 def _agrupar_fatias_pequenas(contagens):
@@ -897,7 +888,7 @@ def _grafico_rosca(df, coluna, titulo):
         textinfo="percent+label",
         hovertemplate="%{label}<br>Acidentes: %{value:,.0f}<extra></extra>",
     )
-    return _aplicar_tema(figura)
+    return aplicar_tema(figura)
 
 
 def _adicionar_ups(df):
@@ -1016,7 +1007,7 @@ def _grafico_risco_causas(df, filtros):
         showlegend=False,
     )
     figura.update_yaxes(rangemode="tozero")
-    return _aplicar_tema(figura)
+    return aplicar_tema(figura)
 
 
 def _grafico_risco_barras(df, coluna, minimo=30):
@@ -1049,7 +1040,7 @@ def _grafico_risco_barras(df, coluna, minimo=30):
             "Acidentes: %{customdata[1]:,.0f}<extra></extra>"
         ),
     )
-    figura = _aplicar_tema(figura)
+    figura = aplicar_tema(figura)
     rotulos = tabela["rotulo"].tolist()
     figura.update_layout(
         xaxis_title="Letalidade (%)",
@@ -1110,61 +1101,123 @@ def _grafico_risco_horas(df):
     )
     figura.update_yaxes(title_text="Acidentes", rangemode="tozero", secondary_y=False)
     figura.update_yaxes(title_text="Letalidade (%)", rangemode="tozero", secondary_y=True)
-    return _aplicar_tema(figura)
+    return aplicar_tema(figura)
 
 
 def _grafico_mapa_risco(df, filtros):
-    pontos = df.loc[
-        df["classificacao_acidente"].isin(
-            ("Com Vítimas Fatais", "Com Vítimas Feridas")
-        )
-    ].copy()
-    for coluna in ("latitude", "longitude", "ups"):
-        pontos[coluna] = pd.to_numeric(pontos[coluna], errors="coerce")
-    pontos = pontos.dropna(subset=["latitude", "longitude"])
-    pontos = pontos.loc[
-        pontos["latitude"].between(-90, 90)
-        & pontos["longitude"].between(-180, 180)
-    ]
-    if pontos.empty:
+    dados = df.loc[df["trecho"] != "NÃO INFORMADO"].copy()
+    if dados.empty:
         return None
 
+    for coluna in ("latitude", "longitude", "ups"):
+        dados[coluna] = pd.to_numeric(dados[coluna], errors="coerce")
+    coordenadas_validas = (
+        dados["latitude"].between(-90, 90)
+        & dados["longitude"].between(-180, 180)
+    )
+    dados.loc[~coordenadas_validas, ["latitude", "longitude"]] = float("nan")
+
+    def mais_frequente(valores):
+        contagem = valores.value_counts()
+        return contagem.index[0] if not contagem.empty else "NÃO INFORMADO"
+
+    trechos = (
+        dados.groupby("trecho", dropna=False)
+        .agg(
+            ups=("ups", "sum"),
+            acidentes=("id", "size"),
+            mortos=("mortos", "sum"),
+            feridos_graves=("feridos_graves", "sum"),
+            uf=("uf", mais_frequente),
+            municipio=("municipio", mais_frequente),
+            latitude=("latitude", "mean"),
+            longitude=("longitude", "mean"),
+        )
+        .dropna(subset=["latitude", "longitude"])
+        .sort_values(["ups", "acidentes"], ascending=False)
+        .reset_index()
+    )
+    if trechos.empty:
+        return None
+
+    trechos["rotulo_mapa"] = ""
+    trechos.loc[trechos.head(10).index, "rotulo_mapa"] = trechos.head(10)["trecho"]
     centro = {
-        "lat": float(pontos["latitude"].mean()),
-        "lon": float(pontos["longitude"].mean()),
+        "lat": float(trechos["latitude"].mean()),
+        "lon": float(trechos["longitude"].mean()),
     }
-    zoom = 9 if filtros.get("municipio") else 6 if filtros.get("uf") else 3.3
-    figura = px.density_map(
-        pontos,
+    zoom = 9 if filtros.get("municipio") else 6.5 if filtros.get("uf") else 3.3
+    escala_ups = [
+        [0, "#FDE68A"],
+        [0.35, "#F59E0B"],
+        [0.7, "#DC2626"],
+        [1, "#7F1D1D"],
+    ]
+    figura = px.scatter_map(
+        trechos,
         lat="latitude",
         lon="longitude",
-        z="ups",
-        radius=12,
+        size="ups",
+        size_max=38,
+        color="ups",
+        text="rotulo_mapa",
         center=centro,
         zoom=zoom,
-        map_style="carto-positron",
-        opacity=0.8,
-        color_continuous_scale=[
-            [0, "rgba(255,255,255,0)"],
-            [0.3, "#C9A227"],
-            [0.7, "#C8102E"],
-            [1, "#7A0C14"],
+        map_style="carto-darkmatter",
+        opacity=0.85,
+        color_continuous_scale=escala_ups,
+        custom_data=[
+            "trecho",
+            "uf",
+            "municipio",
+            "ups",
+            "acidentes",
+            "mortos",
+            "feridos_graves",
         ],
-        hover_name="municipio",
-        hover_data={
-            "uf": True,
-            "trecho": True,
-            "ups": True,
-            "latitude": False,
-            "longitude": False,
-        },
-        labels={"ups": "UPS", "uf": "UF", "trecho": "Trecho"},
-        template="plotly_white",
     )
-    figura = _aplicar_tema(figura)
+    figura.update_traces(
+        mode="markers+text",
+        textposition="top right",
+        textfont={"color": "white", "size": 12},
+        hovertemplate=(
+            "Trecho: %{customdata[0]}<br>"
+            "UF: %{customdata[1]}<br>"
+            "Município: %{customdata[2]}<br>"
+            "UPS: %{customdata[3]:,.0f}<br>"
+            "Acidentes: %{customdata[4]:,.0f}<br>"
+            "Mortos: %{customdata[5]:,.0f}<br>"
+            "Feridos graves: %{customdata[6]:,.0f}"
+            "<extra></extra>"
+        ),
+    )
+
+    # Scattermap não oferece marker.line; uma camada branca sob as bolhas cria o contorno.
+    bolhas = figura.data[0]
+    tamanhos_contorno = [
+        (float(tamanho) / bolhas.marker.sizeref) ** 0.5 + 2
+        for tamanho in bolhas.marker.size
+    ]
+    marcador_contorno = go.Scattermap(
+        lat=bolhas.lat,
+        lon=bolhas.lon,
+        mode="markers",
+        marker={
+            "size": tamanhos_contorno,
+            "sizemode": "diameter",
+            "sizeref": 1,
+            "color": "white",
+            "opacity": 1,
+        },
+        hoverinfo="skip",
+        showlegend=False,
+    )
+    figura.add_trace(marcador_contorno)
+    figura.data = (figura.data[-1], *figura.data[:-1])
     figura.update_layout(
-        height=520,
+        height=560,
         autosize=True,
+        font={"family": "Inter, sans-serif"},
         margin={"l": 0, "r": 0, "t": 0, "b": 0},
         map={"center": centro, "zoom": zoom},
         coloraxis_colorbar={
@@ -1172,6 +1225,7 @@ def _grafico_mapa_risco(df, filtros):
             "thickness": 12,
             "len": 0.6,
         },
+        coloraxis={"colorscale": escala_ups},
     )
     return figura
 
@@ -1204,21 +1258,38 @@ def _preparar_cartoes_risco(df, df_completo, filtros):
             "titulo": "Letalidade geral",
             "descricao": "Mortos por 100 acidentes no recorte selecionado.",
             "valor": _letalidade_formatada(df),
+            "valor_animacao": _letalidade(df),
         },
         {
             "titulo": "Noite x dia",
             "descricao": "Comparação entre 18h–5h e 6h–17h.",
             "comparacoes": [
-                {"rotulo": "Noite", "valor": _letalidade_formatada(noite)},
-                {"rotulo": "Dia", "valor": _letalidade_formatada(dia)},
+                {
+                    "rotulo": "Noite",
+                    "valor": _letalidade_formatada(noite),
+                    "valor_animacao": _letalidade(noite),
+                },
+                {
+                    "rotulo": "Dia",
+                    "valor": _letalidade_formatada(dia),
+                    "valor_animacao": _letalidade(dia),
+                },
             ],
         },
         {
             "titulo": "Fim de semana x dias úteis",
             "descricao": "Comparação de sábado e domingo com segunda a sexta.",
             "comparacoes": [
-                {"rotulo": "Fim de semana", "valor": _letalidade_formatada(fim_semana)},
-                {"rotulo": "Dias úteis", "valor": _letalidade_formatada(dias_uteis)},
+                {
+                    "rotulo": "Fim de semana",
+                    "valor": _letalidade_formatada(fim_semana),
+                    "valor_animacao": _letalidade(fim_semana),
+                },
+                {
+                    "rotulo": "Dias úteis",
+                    "valor": _letalidade_formatada(dias_uteis),
+                    "valor_animacao": _letalidade(dias_uteis),
+                },
             ],
         },
         {
@@ -1232,9 +1303,18 @@ def _preparar_cartoes_risco(df, df_completo, filtros):
                         if filtros.get("uf")
                         else "—"
                     ),
+                    "valor_animacao": _letalidade(df) if filtros.get("uf") else None,
                 },
-                {"rotulo": "Nordeste", "valor": _letalidade_formatada(nordeste)},
-                {"rotulo": "Brasil", "valor": _letalidade_formatada(base_benchmark)},
+                {
+                    "rotulo": "Nordeste",
+                    "valor": _letalidade_formatada(nordeste),
+                    "valor_animacao": _letalidade(nordeste),
+                },
+                {
+                    "rotulo": "Brasil",
+                    "valor": _letalidade_formatada(base_benchmark),
+                    "valor_animacao": _letalidade(base_benchmark),
+                },
             ],
         },
     ]
@@ -1357,7 +1437,7 @@ def _grafico_mapa(df, filtros=None):
         legend_title_text="Classificação",
         margin={"l": 0, "r": 0, "t": 55, "b": 0},
     )
-    return _aplicar_tema(figura)
+    return aplicar_tema(figura)
 
 
 def _preparar_tabelas(df):
@@ -1450,10 +1530,12 @@ def _gerar_graficos(df, periodos, filtros):
 def _preparar_kpis(df, incluir_chave=False):
     kpis = []
     for chave, indicador in INDICADORES.items():
+        valor = calcular_kpi(df, chave)
         kpi = {
             "nome": indicador["nome"],
             "descricao": indicador["descricao"],
-            "valor": _formatar_kpi(chave, calcular_kpi(df, chave)),
+            "valor": _formatar_kpi(chave, valor),
+            "valor_animacao": valor,
         }
         if incluir_chave:
             kpi["chave"] = chave
@@ -1500,6 +1582,7 @@ def _contexto_comum(request, df, filtros, filtrado, pagina_atual):
         "municipios": municipios_por_uf[filtros["uf"]],
         "brs_por_uf": brs_por_uf,
         "municipios_por_uf": municipios_por_uf,
+        "plotly_templates": TEMPLATES_PLOTLY,
         "meses": [
             {"valor": periodo, "rotulo": _rotulo_periodo(periodo)}
             for periodo in meses
@@ -1570,7 +1653,7 @@ def painel(request):
     periodos = _periodos_filtrados(df, filtros)
 
     contexto = _contexto_comum(request, df, filtros, filtrado, "painel")
-    contexto["kpis"] = _preparar_kpis(filtrado)
+    contexto["kpis"] = _preparar_cartoes_home(filtrado, periodos)
     if filtrado.empty:
         contexto.update(
             {
@@ -1614,7 +1697,7 @@ def indicador(request, slug):
         mapa = _grafico_mapa(filtrado, filtros)
         graficos = {
             "mensal": _figura_div(
-                _grafico_mensal_indicador(filtrado, periodos, slug)
+                _grafico_evolucao_mensal(filtrado, periodos, 380)
             ),
             "causas": _figura_div(
                 _grafico_barras_indicador(
@@ -1640,11 +1723,14 @@ def indicador(request, slug):
         mensagem_sem_registros = ""
 
     valor_total = calcular_kpi(filtrado, slug)
+    tendencia_kpi = _preparar_tendencia_home(filtrado, periodos, slug)
     contexto.update(
         {
             "indicador": indicador_info,
             "slug": slug,
             "valor_total": _formatar_kpi(slug, valor_total),
+            "valor_animacao": valor_total,
+            "tendencia_kpi": tendencia_kpi,
             "comparacao": _comparar_trimestres(df, filtros, slug),
             "graficos": graficos,
             "tabela_trechos": tabela_trechos,

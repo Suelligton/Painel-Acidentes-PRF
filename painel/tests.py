@@ -11,9 +11,12 @@ from .views import (
     _agrupar_fatias_pequenas,
     _grafico_calor,
     _grafico_barras_indicador,
+    _grafico_evolucao_home,
     _grafico_mapa,
+    _grafico_mapa_home,
     _grafico_mapa_risco,
     _letalidade,
+    aplicar_tema,
     _preparar_cartoes_risco,
     _preparar_cartoes_home,
     _rotulo_br,
@@ -157,20 +160,69 @@ class CamadaDadosTests(SimpleTestCase):
             9,
         )
 
-    def test_mapa_risco_tem_altura_escala_centro_e_descarta_coordenadas_invalidas(self):
+    def test_mapa_home_tem_fundo_escuro_pontos_pequenos_e_cores_por_classificacao(self):
+        dados_mapa = pd.concat(
+            [
+                self.dados,
+                self.dados.iloc[[1]].assign(
+                    classificacao_acidente="Sem Vítimas"
+                ),
+            ],
+            ignore_index=True,
+        )
+        figura = _grafico_mapa_home(
+            dados_mapa,
+            {"uf": "", "municipio": ""},
+        )
+
+        self.assertEqual(figura.layout.map.style, "carto-darkmatter")
+        self.assertEqual(
+            [traco.marker.color for traco in figura.data],
+            ["#DC2626", "#F59E0B", "#A8A29E"],
+        )
+        self.assertEqual(figura.data[0].marker.size, 5)
+        self.assertEqual(figura.data[0].marker.opacity, 0.75)
+
+    def test_evolucao_mensal_usa_area_linha_secundaria_e_valores_finais(self):
+        figura = _grafico_evolucao_home(self.dados, ["2026-01", "2026-02"])
+
+        self.assertEqual(figura.data[0].name, "Acidentes")
+        self.assertEqual(figura.data[0].fill, "tozeroy")
+        self.assertEqual(figura.data[0].fillgradient.type, "vertical")
+        self.assertEqual(figura.data[1].name, "Mortos")
+        self.assertEqual(figura.data[1].yaxis, "y2")
+        self.assertEqual(figura.layout.yaxis2.rangemode, "tozero")
+        self.assertEqual(
+            [anotacao.text for anotacao in figura.layout.annotations],
+            ["1", "0"],
+        )
+        self.assertIsNone(figura.layout.title.text)
+
+    def test_aplicar_tema_padroniza_tipografia_grade_hover_e_legenda(self):
+        figura = aplicar_tema(_grafico_mapa(self.dados))
+
+        self.assertEqual(figura.layout.font.family, "Inter, sans-serif")
+        self.assertEqual(figura.layout.hoverlabel.bgcolor, "#1C1C1C")
+        self.assertEqual(figura.layout.hoverlabel.font.color, "white")
+        self.assertFalse(figura.layout.xaxis.showgrid)
+        self.assertTrue(figura.layout.yaxis.showgrid)
+        self.assertEqual(figura.layout.legend.orientation, "h")
+        self.assertEqual(figura.layout.legend.yanchor, "top")
+
+    def test_mapa_risco_agrupa_trechos_e_exibe_bolhas_de_ups(self):
         figura = _grafico_mapa_risco(
             _adicionar_ups(self.dados),
             {"uf": "TO"},
         )
 
-        self.assertEqual(figura.layout.height, 520)
+        self.assertEqual(figura.layout.height, 560)
         self.assertTrue(figura.layout.autosize)
         self.assertEqual(figura.layout.margin.l, 0)
         self.assertEqual(figura.layout.margin.r, 0)
         self.assertEqual(figura.layout.margin.t, 0)
         self.assertEqual(figura.layout.margin.b, 0)
-        self.assertEqual(figura.layout.map.style, "carto-positron")
-        self.assertEqual(figura.layout.map.zoom, 6)
+        self.assertEqual(figura.layout.map.style, "carto-darkmatter")
+        self.assertEqual(figura.layout.map.zoom, 6.5)
         self.assertAlmostEqual(
             figura.layout.map.center.lat,
             self.dados["latitude"].mean(),
@@ -179,19 +231,65 @@ class CamadaDadosTests(SimpleTestCase):
             figura.layout.map.center.lon,
             self.dados["longitude"].mean(),
         )
-        self.assertEqual(figura.data[0].radius, 12)
-        self.assertEqual(figura.data[0].opacity, 0.8)
+        self.assertEqual(figura.data[1].marker.opacity, 0.85)
+        self.assertEqual(figura.data[1].mode, "markers+text")
+        self.assertEqual(figura.data[1].textposition, "top right")
+        self.assertEqual(figura.data[1].textfont.color, "white")
+        self.assertEqual(figura.data[1].textfont.size, 12)
+        self.assertEqual(figura.data[0].marker.color, "white")
+        self.assertEqual(
+            list(figura.data[1].text),
+            ["BR-230 km 140-150", "BR-262 km 10-20"],
+        )
+        self.assertEqual(
+            figura.layout.coloraxis.colorscale,
+            ((0, "#FDE68A"), (0.35, "#F59E0B"), (0.7, "#DC2626"), (1, "#7F1D1D")),
+        )
         self.assertEqual(
             figura.layout.coloraxis.colorbar.title.text,
             "Severidade (UPS)",
         )
         self.assertEqual(figura.layout.coloraxis.colorbar.thickness, 12)
         self.assertEqual(figura.layout.coloraxis.colorbar.len, 0.6)
+        for campo in (
+            "Trecho:",
+            "UF:",
+            "Município:",
+            "UPS:",
+            "Acidentes:",
+            "Mortos:",
+            "Feridos graves:",
+            "<extra></extra>",
+        ):
+            self.assertIn(campo, figura.data[1].hovertemplate)
 
         sem_coordenadas = _adicionar_ups(
             self.dados.assign(latitude=["inválida", ""], longitude=["", "inválida"])
         )
         self.assertIsNone(_grafico_mapa_risco(sem_coordenadas, {}))
+
+    def test_mapa_risco_resume_metricas_e_localidades_do_trecho(self):
+        trecho = self.dados.iloc[[0, 0, 0]].copy()
+        trecho["classificacao_acidente"] = [
+            "Com Vítimas Fatais",
+            "Com Vítimas Feridas",
+            "Com Vítimas Fatais",
+        ]
+        trecho["mortos"] = [1, 0, 1]
+        trecho["feridos_graves"] = [0, 2, 1]
+        trecho["uf"] = ["TO", "TO", "MG"]
+        trecho["municipio"] = ["CIDADE A", "CIDADE A", "CIDADE B"]
+        trecho["latitude"] = [-7.2, -7.3, "inválida"]
+        trecho["longitude"] = [-48.2, -48.4, "inválida"]
+        figura = _grafico_mapa_risco(_adicionar_ups(trecho), {})
+        customdata = figura.data[1].customdata[0]
+
+        self.assertEqual(customdata[0], "BR-230 km 140-150")
+        self.assertEqual(customdata[1], "TO")
+        self.assertEqual(customdata[2], "CIDADE A")
+        self.assertEqual(tuple(customdata[3:]), (31, 3, 2, 3))
+        self.assertAlmostEqual(figura.data[1].lat[0], -7.25)
+        self.assertAlmostEqual(figura.data[1].lon[0], -48.3)
 
     def test_cartoes_comparam_ultimo_mes_com_o_anterior(self):
         cartoes = {
@@ -322,11 +420,28 @@ class RotasPainelTests(SimpleTestCase):
                 resposta = self.client.get(caminho)
                 self.assertEqual(resposta.status_code, 200)
 
+    def test_acabamento_visual_compartilhado_e_kpis_animados(self):
+        for caminho in ("/", "/painel/"):
+            with self.subTest(caminho=caminho):
+                resposta = self.client.get(caminho)
+                self.assertContains(resposta, 'id="theme-toggle"')
+                self.assertContains(
+                    resposta,
+                    "Dados de jan a set/2026 · fonte PRF",
+                )
+                self.assertContains(resposta, "data-count-up")
+                self.assertContains(resposta, "vs. mês anterior")
+                self.assertContains(resposta, 'id="plotly-templates"')
+
     def test_pagina_analise_de_risco_responde_com_e_sem_filtro_uf(self):
         for caminho in ("/risco/", "/risco/?uf=PB"):
             with self.subTest(caminho=caminho):
                 resposta = self.client.get(caminho)
                 self.assertEqual(resposta.status_code, 200)
+                self.assertContains(
+                    resposta,
+                    "Cada bolha é um trecho de 10 km. Quanto maior e mais vermelha, mais graves os acidentes.",
+                )
 
     def test_indicador_inexistente_responde_nao_encontrado(self):
         resposta = self.client.get("/indicador/inexistente/")

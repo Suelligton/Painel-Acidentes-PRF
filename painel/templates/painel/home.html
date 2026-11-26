@@ -9,7 +9,10 @@
                class="group flex min-h-[150px] min-w-0 flex-col rounded-xl border border-stone-200 border-t-[3px] bg-white p-3 shadow-sm transition hover:-translate-y-1 hover:border-[#C9A227] hover:shadow-lg"
                style="border-top-color: {{ cartao.cor }};">
                 <p class="truncate text-xs font-bold uppercase tracking-wide text-[#78716C]">{{ cartao.nome }}</p>
-                <p class="mt-1 text-2xl font-extrabold tracking-tight text-[#1C1C1C] xl:text-3xl">{{ cartao.valor }}</p>
+                <p class="count-up mt-1 text-2xl font-extrabold tracking-tight text-[#1C1C1C] xl:text-3xl"
+                   data-count-up
+                   data-count-target="{{ cartao.valor_animacao }}"
+                   data-count-decimals="{% if cartao.chave == 'gravidade' %}2{% else %}0{% endif %}">{{ cartao.valor }}</p>
                 {% if cartao.chave == "gravidade" %}
                     <p class="text-[0.65rem] text-[#78716C]">mortos por 100 acidentes</p>
                 {% endif %}

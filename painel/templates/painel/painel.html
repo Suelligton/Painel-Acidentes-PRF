@@ -5,53 +5,74 @@
 {% block conteudo %}
     <section class="mb-5 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-6" aria-label="Indicadores">
         {% for kpi in kpis %}
-            <article class="rounded-xl border border-stone-200 border-t-[3px] border-t-[#1C1C1C] bg-white p-4 shadow-sm" title="{{ kpi.descricao }}">
+            <article class="flex min-w-0 flex-col rounded-xl border border-stone-200 border-t-[3px] bg-white p-3 shadow-sm sm:p-4" title="{{ kpi.descricao }}" style="border-top-color: {{ kpi.cor }};">
                 <p class="text-xs font-bold uppercase tracking-wide text-[#78716C]">{{ kpi.nome }}</p>
-                <p class="mt-2 text-3xl font-extrabold tracking-tight text-[#1C1C1C]">{{ kpi.valor }}</p>
+                <p class="count-up mt-2 text-2xl font-extrabold tracking-tight text-[#1C1C1C] sm:text-3xl"
+                   data-count-up
+                   data-count-target="{{ kpi.valor_animacao }}"
+                   data-count-decimals="{% if kpi.chave == 'gravidade' %}2{% else %}0{% endif %}">{{ kpi.valor }}</p>
                 {% if kpi.nome == "Gravidade" %}
                     <p class="mt-1 text-xs text-[#78716C]">mortos por 100 acidentes</p>
                 {% endif %}
+                <p class="mt-2 flex items-center gap-1 text-[0.68rem] font-semibold">
+                    {% if kpi.tipo_variacao == "piorou" %}
+                        <span class="text-[#C8102E]" aria-label="Piorou">▲</span>
+                    {% elif kpi.tipo_variacao == "melhorou" %}
+                        <span class="text-emerald-700" aria-label="Melhorou">▼</span>
+                    {% endif %}
+                    <span class="{% if kpi.tipo_variacao == 'piorou' %}text-[#C8102E]{% elif kpi.tipo_variacao == 'melhorou' %}text-emerald-700{% else %}text-[#78716C]{% endif %}">{{ kpi.variacao }}</span>
+                    <span class="truncate font-normal text-[#78716C]">vs. mês anterior</span>
+                </p>
+                <div class="mt-auto pt-1">{% if kpi.sparkline %}{{ kpi.sparkline|safe }}{% endif %}</div>
             </article>
         {% endfor %}
     </section>
 
     <section class="grid grid-cols-1 gap-4 xl:grid-cols-2" aria-label="Gráficos do painel">
         <article class="min-w-0 rounded-xl border border-stone-200 border-t-[3px] border-t-[#1C1C1C] bg-white p-3 shadow-sm xl:col-span-2">
+            <h2 class="mb-1 text-sm font-bold text-[#1C1C1C]">Evolução mensal</h2>
             {% if graficos.mensal %}{{ graficos.mensal|safe }}{% else %}
                 <p class="p-8 text-center font-semibold text-[#78716C]">{{ mensagem_sem_registros }}</p>
             {% endif %}
         </article>
         <article class="min-w-0 rounded-xl border border-stone-200 border-t-[3px] border-t-[#1C1C1C] bg-white p-3 shadow-sm">
+            <h2 class="mb-1 text-sm font-bold text-[#1C1C1C]">Principais causas</h2>
             {% if graficos.causas %}{{ graficos.causas|safe }}{% else %}
                 <p class="p-8 text-center font-semibold text-[#78716C]">{{ mensagem_sem_registros }}</p>
             {% endif %}
         </article>
         <article class="min-w-0 rounded-xl border border-stone-200 border-t-[3px] border-t-[#1C1C1C] bg-white p-3 shadow-sm">
+            <h2 class="mb-1 text-sm font-bold text-[#1C1C1C]">Tipos de acidente</h2>
             {% if graficos.tipos %}{{ graficos.tipos|safe }}{% else %}
                 <p class="p-8 text-center font-semibold text-[#78716C]">{{ mensagem_sem_registros }}</p>
             {% endif %}
         </article>
         <article class="min-w-0 rounded-xl border border-stone-200 border-t-[3px] border-t-[#1C1C1C] bg-white p-3 shadow-sm">
+            <h2 class="mb-1 text-sm font-bold text-[#1C1C1C]">Acidentes por região</h2>
             {% if graficos.ranking %}{{ graficos.ranking|safe }}{% else %}
                 <p class="p-8 text-center font-semibold text-[#78716C]">{{ mensagem_sem_registros }}</p>
             {% endif %}
         </article>
         <article class="min-w-0 rounded-xl border border-stone-200 border-t-[3px] border-t-[#1C1C1C] bg-white p-3 shadow-sm">
+            <h2 class="mb-1 text-sm font-bold text-[#1C1C1C]">Acidentes por dia e hora</h2>
             {% if graficos.calor %}{{ graficos.calor|safe }}{% else %}
                 <p class="p-8 text-center font-semibold text-[#78716C]">{{ mensagem_sem_registros }}</p>
             {% endif %}
         </article>
         <article class="min-w-0 rounded-xl border border-stone-200 border-t-[3px] border-t-[#1C1C1C] bg-white p-3 shadow-sm">
+            <h2 class="mb-1 text-sm font-bold text-[#1C1C1C]">Acidentes por fase do dia</h2>
             {% if graficos.fase %}{{ graficos.fase|safe }}{% else %}
                 <p class="p-8 text-center font-semibold text-[#78716C]">{{ mensagem_sem_registros }}</p>
             {% endif %}
         </article>
         <article class="min-w-0 rounded-xl border border-stone-200 border-t-[3px] border-t-[#1C1C1C] bg-white p-3 shadow-sm">
+            <h2 class="mb-1 text-sm font-bold text-[#1C1C1C]">Acidentes por condição meteorológica</h2>
             {% if graficos.clima %}{{ graficos.clima|safe }}{% else %}
                 <p class="p-8 text-center font-semibold text-[#78716C]">{{ mensagem_sem_registros }}</p>
             {% endif %}
         </article>
         <article class="min-w-0 rounded-xl border border-stone-200 border-t-[3px] border-t-[#1C1C1C] bg-white p-3 shadow-sm xl:col-span-2">
+            <h2 class="mb-1 text-sm font-bold text-[#1C1C1C]">Acidentes no mapa</h2>
             {% if graficos.mapa %}{{ graficos.mapa|safe }}{% elif mensagem_sem_registros %}
                 <p class="p-8 text-center font-semibold text-[#78716C]">{{ mensagem_sem_registros }}</p>
             {% else %}

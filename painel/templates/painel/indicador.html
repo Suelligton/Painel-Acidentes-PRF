@@ -14,7 +14,22 @@
             <p class="text-xs font-bold uppercase tracking-[0.16em] text-[#78716C]">Indicador</p>
             <h2 class="mt-1 text-xl font-extrabold text-[#1C1C1C]">{{ indicador.nome }}</h2>
             <p class="mt-1 text-sm text-[#78716C]">{{ indicador.descricao }}</p>
-            <p class="mt-5 text-5xl font-extrabold tracking-tight text-[#C8102E]">{{ valor_total }}</p>
+            <p class="count-up mt-5 text-5xl font-extrabold tracking-tight text-[#C8102E]"
+               data-count-up
+               data-count-target="{{ valor_animacao }}"
+               data-count-decimals="{% if slug == 'gravidade' %}2{% else %}0{% endif %}">{{ valor_total }}</p>
+            <div class="mt-3 flex max-w-sm items-center gap-3">
+                <div class="w-36 shrink-0">{% if tendencia_kpi.sparkline %}{{ tendencia_kpi.sparkline|safe }}{% endif %}</div>
+                <p class="flex items-center gap-1 text-[0.68rem] font-semibold">
+                    {% if tendencia_kpi.tipo_variacao == "piorou" %}
+                        <span class="text-[#C8102E]" aria-label="Piorou">▲</span>
+                    {% elif tendencia_kpi.tipo_variacao == "melhorou" %}
+                        <span class="text-emerald-700" aria-label="Melhorou">▼</span>
+                    {% endif %}
+                    <span class="{% if tendencia_kpi.tipo_variacao == 'piorou' %}text-[#C8102E]{% elif tendencia_kpi.tipo_variacao == 'melhorou' %}text-emerald-700{% else %}text-[#78716C]{% endif %}">{{ tendencia_kpi.variacao }}</span>
+                    <span class="font-normal text-[#78716C]">vs. mês anterior</span>
+                </p>
+            </div>
             {% if slug == "gravidade" %}
                 <p class="mt-1 text-sm text-[#78716C]">mortos por 100 acidentes</p>
             {% endif %}
@@ -49,26 +64,31 @@
 
     <section class="grid grid-cols-1 gap-4 xl:grid-cols-2" aria-label="Detalhes do indicador">
         <article class="min-w-0 rounded-xl border border-stone-200 border-t-[3px] border-t-[#1C1C1C] bg-white p-3 shadow-sm xl:col-span-2">
+            <h2 class="mb-1 text-sm font-bold text-[#1C1C1C]">Evolução mensal · Acidentes e mortos</h2>
             {% if graficos.mensal %}{{ graficos.mensal|safe }}{% else %}
                 <p class="p-8 text-center font-semibold text-[#78716C]">{{ mensagem_sem_registros }}</p>
             {% endif %}
         </article>
         <article class="min-w-0 rounded-xl border border-stone-200 border-t-[3px] border-t-[#1C1C1C] bg-white p-3 shadow-sm">
+            <h2 class="mb-1 text-sm font-bold text-[#1C1C1C]">Principais causas</h2>
             {% if graficos.causas %}{{ graficos.causas|safe }}{% else %}
                 <p class="p-8 text-center font-semibold text-[#78716C]">{{ mensagem_sem_registros }}</p>
             {% endif %}
         </article>
         <article class="min-w-0 rounded-xl border border-stone-200 border-t-[3px] border-t-[#1C1C1C] bg-white p-3 shadow-sm">
+            <h2 class="mb-1 text-sm font-bold text-[#1C1C1C]">Distribuição por {{ filtros.uf|yesno:"BR,UF" }}</h2>
             {% if graficos.ranking %}{{ graficos.ranking|safe }}{% else %}
                 <p class="p-8 text-center font-semibold text-[#78716C]">{{ mensagem_sem_registros }}</p>
             {% endif %}
         </article>
         <article class="min-w-0 rounded-xl border border-stone-200 border-t-[3px] border-t-[#1C1C1C] bg-white p-3 shadow-sm xl:col-span-2">
+            <h2 class="mb-1 text-sm font-bold text-[#1C1C1C]">Acidentes por dia e hora</h2>
             {% if graficos.calor %}{{ graficos.calor|safe }}{% else %}
                 <p class="p-8 text-center font-semibold text-[#78716C]">{{ mensagem_sem_registros }}</p>
             {% endif %}
         </article>
         <article class="min-w-0 rounded-xl border border-stone-200 border-t-[3px] border-t-[#1C1C1C] bg-white p-3 shadow-sm xl:col-span-2">
+            <h2 class="mb-1 text-sm font-bold text-[#1C1C1C]">Acidentes no mapa</h2>
             {% if graficos.mapa %}{{ graficos.mapa|safe }}{% elif mensagem_sem_registros %}
                 <p class="p-8 text-center font-semibold text-[#78716C]">{{ mensagem_sem_registros }}</p>
             {% else %}
