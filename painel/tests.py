@@ -6,15 +6,19 @@ from django.test import Client, SimpleTestCase
 from .dados import calcular_kpi, limpar
 from .views import (
     CONFIG_GRAFICO_HOME,
-    _figura_div,
     _adicionar_ups,
     _agrupar_fatias_pequenas,
+    _figura_barras,
+    _figura_div,
     _grafico_calor,
     _grafico_barras_indicador,
+    _grafico_classificacao_home,
+    _grafico_calor_indicador,
     _grafico_evolucao_home,
     _grafico_mapa,
     _grafico_mapa_home,
     _grafico_mapa_risco,
+    _grafico_sparkline,
     _letalidade,
     aplicar_tema,
     _preparar_cartoes_risco,
@@ -182,16 +186,34 @@ class CamadaDadosTests(SimpleTestCase):
         )
         self.assertEqual(figura.data[0].marker.size, 5)
         self.assertEqual(figura.data[0].marker.opacity, 0.75)
+        self.assertEqual(figura.layout.map.center.lat, -14)
+        self.assertEqual(figura.layout.map.center.lon, -52)
+        self.assertEqual(figura.layout.map.zoom, 3.2)
+        figura_uf = _grafico_mapa_home(
+            self.dados.iloc[[0]],
+            {"uf": "TO", "municipio": ""},
+        )
+        self.assertEqual(figura_uf.layout.map.zoom, 6)
+        self.assertAlmostEqual(figura_uf.layout.map.center.lat, -7.291548)
+        figura_municipio = _grafico_mapa_home(
+            self.dados.iloc[[0]],
+            {"uf": "TO", "municipio": "ARAGUAINA"},
+        )
+        self.assertEqual(figura_municipio.layout.map.zoom, 9)
 
     def test_evolucao_mensal_usa_area_linha_secundaria_e_valores_finais(self):
         figura = _grafico_evolucao_home(self.dados, ["2026-01", "2026-02"])
 
+        self.assertEqual(list(figura.data[0].x), ["Jan", "Fev"])
+        self.assertEqual(figura.layout.xaxis.tickangle, 0)
         self.assertEqual(figura.data[0].name, "Acidentes")
         self.assertEqual(figura.data[0].fill, "tozeroy")
         self.assertEqual(figura.data[0].fillgradient.type, "vertical")
         self.assertEqual(figura.data[1].name, "Mortos")
         self.assertEqual(figura.data[1].yaxis, "y2")
         self.assertEqual(figura.layout.yaxis2.rangemode, "tozero")
+        self.assertEqual(figura.layout.yaxis2.tickformat, "d")
+        self.assertFalse(figura.layout.yaxis2.showgrid)
         self.assertEqual(
             [anotacao.text for anotacao in figura.layout.annotations],
             ["1", "0"],
@@ -308,6 +330,23 @@ class CamadaDadosTests(SimpleTestCase):
         self.assertEqual(cartoes["feridos_graves"]["tipo_variacao"], "piorou")
         self.assertIn("plotly-graph-div", cartoes["mortos"]["sparkline"])
 
+    def test_sparkline_usa_escala_local_preenchimento_e_hover_em_portugues(self):
+        grafico = _grafico_sparkline(
+            ["2026-01", "2026-02"],
+            pd.Series([100, 120]),
+            "#C8102E",
+            "acidentes",
+        )
+
+        self.assertIn('"range":[98.0,122.0]', grafico)
+        self.assertIn('"fill":"tozeroy"', grafico)
+        self.assertIn("rgba(200, 16, 46, 0.15)", grafico)
+        self.assertIn("%{x}: %{customdata}", grafico)
+        self.assertIn("\\u003cextra\\u003e", grafico)
+        self.assertIn("Jan\\u002f2026", grafico)
+        self.assertIn('"width":2', grafico)
+        self.assertIn('"size":6', grafico)
+
     def test_barras_quebram_rotulos_sem_perder_nome_no_hover(self):
         dados_barras = pd.concat(
             [
@@ -343,6 +382,40 @@ class CamadaDadosTests(SimpleTestCase):
         self.assertIn("<extra></extra>", figura.data[0].hovertemplate)
         self.assertGreater(figura.layout.height, 300)
         self.assertTrue(figura.layout.yaxis.automargin)
+        self.assertFalse(figura.layout.xaxis.showticklabels)
+        self.assertEqual(figura.layout.xaxis.title.text, "")
+        self.assertEqual(figura.data[0].texttemplate, "%{x:,.0f}")
+
+    def test_barras_da_home_escondem_eixo_e_formatam_milhar_no_valor(self):
+        figura = _figura_barras(
+            pd.Series({"Causa A": 8778, "Causa B": 4}),
+            None,
+            "#C8102E",
+        )
+
+        self.assertFalse(figura.layout.xaxis.showticklabels)
+        self.assertEqual(figura.layout.xaxis.title.text, "")
+        self.assertEqual(list(figura.data[0].text), ["4", "8.778"])
+        self.assertEqual(figura.data[0].texttemplate, "%{text}")
+
+    def test_rosca_mostra_apenas_tres_classificacoes_com_percentual_decimal(self):
+        dados = pd.concat(
+            [
+                self.dados,
+                self.dados.iloc[[0]].assign(
+                    classificacao_acidente="Outros"
+                ),
+            ],
+            ignore_index=True,
+        )
+        figura = _grafico_classificacao_home(dados)
+
+        self.assertEqual(
+            list(figura.data[0].labels),
+            ["Com Vítimas Fatais", "Com Vítimas Feridas"],
+        )
+        self.assertEqual(figura.data[0].texttemplate, "%{percent:.1%}")
+        self.assertNotIn("Outros", figura.data[0].labels)
 
     def test_graficos_da_home_podem_ocultar_barra_de_ferramentas(self):
         figura = _grafico_barras_indicador(
@@ -401,8 +474,51 @@ class CamadaDadosTests(SimpleTestCase):
 
         brasil = _grafico_calor(self.dados, {})
         uf = _grafico_calor(self.dados, {"uf": "TO"})
-        self.assertIsNone(brasil.data[0].texttemplate)
-        self.assertEqual(uf.data[0].texttemplate, "%{z}")
+        calor_indicador = _grafico_calor_indicador(
+            self.dados,
+            "veiculos",
+            {"uf": "TO"},
+        )
+        self.assertEqual(brasil.data[0].type, "heatmap")
+        self.assertEqual(len(brasil.data[0].x), 24)
+        self.assertEqual(len(brasil.data[0].y), 7)
+        self.assertEqual(brasil.data[0].y, tuple(range(7)))
+        self.assertEqual(
+            brasil.layout.yaxis.ticktext,
+            ("Seg", "Ter", "Qua", "Qui", "Sex", "Sáb", "Dom"),
+        )
+        self.assertEqual(brasil.data[0].z[0][0], 0)
+        self.assertEqual(brasil.data[0].z[0][18], 1)
+        self.assertEqual(brasil.data[0].z[3][4], 1)
+        self.assertEqual(
+            brasil.data[0].colorscale,
+            ((0, "#FBF5F5"), (0.5, "#E06666"), (1, "#7A0C14")),
+        )
+        self.assertEqual(brasil.data[0].customdata[3][4], "Quinta, 4h: 1 acidentes")
+        self.assertEqual(calor_indicador.data[0].z[3][4], 5)
+        self.assertEqual(
+            calor_indicador.data[0].customdata[3][4],
+            "Quinta, 4h: 5 veículos",
+        )
+        self.assertEqual(
+            brasil.data[0].hovertemplate,
+            "%{customdata}<extra></extra>",
+        )
+        self.assertEqual(brasil.data[0].xgap, 2)
+        self.assertEqual(brasil.data[0].ygap, 2)
+        self.assertEqual(brasil.data[0].colorbar.thickness, 10)
+        self.assertEqual(brasil.data[0].colorbar.len, 0.8)
+        self.assertFalse(brasil.layout.showlegend)
+        self.assertEqual(brasil.layout.height, 380)
+        self.assertEqual(
+            brasil.layout.margin.to_plotly_json(),
+            {"l": 110, "r": 20, "t": 10, "b": 50},
+        )
+        self.assertEqual(brasil.layout.xaxis.dtick, 3)
+        self.assertEqual(brasil.layout.xaxis.ticksuffix, "h")
+        self.assertEqual(brasil.layout.xaxis.title.text, "Hora do dia")
+        self.assertEqual(brasil.layout.yaxis.title.text, "")
+        self.assertEqual(brasil.layout.yaxis.autorange, "reversed")
         self.assertEqual(_rotulo_br(0), "Não informada")
         self.assertEqual(
             _rotulo_trecho("BR-0 km 10-20"),
@@ -420,6 +536,12 @@ class RotasPainelTests(SimpleTestCase):
                 resposta = self.client.get(caminho)
                 self.assertEqual(resposta.status_code, 200)
 
+    def test_pagina_inicial_exibe_o_mapa_de_calor(self):
+        resposta = self.client.get("/")
+
+        self.assertContains(resposta, "Acidentes por dia e hora")
+        self.assertContains(resposta, '"type":"heatmap"')
+
     def test_acabamento_visual_compartilhado_e_kpis_animados(self):
         for caminho in ("/", "/painel/"):
             with self.subTest(caminho=caminho):
@@ -432,6 +554,16 @@ class RotasPainelTests(SimpleTestCase):
                 self.assertContains(resposta, "data-count-up")
                 self.assertContains(resposta, "vs. mês anterior")
                 self.assertContains(resposta, 'id="plotly-templates"')
+
+    def test_menu_lateral_tem_grupos_compactos_e_preserva_querystring(self):
+        resposta = self.client.get("/painel/?uf=PB")
+
+        self.assertContains(resposta, "Visão geral")
+        self.assertContains(resposta, "Indicadores")
+        self.assertContains(resposta, "Análises")
+        self.assertContains(resposta, 'md:w-[240px]')
+        self.assertContains(resposta, 'class="sidebar-link')
+        self.assertContains(resposta, 'href="/?uf=PB"')
 
     def test_pagina_analise_de_risco_responde_com_e_sem_filtro_uf(self):
         for caminho in ("/risco/", "/risco/?uf=PB"):

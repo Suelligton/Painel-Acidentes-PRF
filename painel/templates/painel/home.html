@@ -44,7 +44,7 @@
                 <p class="p-8 text-center text-sm font-semibold text-[#78716C]">{{ mensagem_sem_registros }}</p>
             {% endif %}
         </article>
-        <article class="min-w-0 rounded-xl border border-stone-200 border-t-[3px] border-t-[#1C1C1C] bg-white p-4 shadow-sm">
+        <article class="home-map-card min-w-0 rounded-xl border border-stone-200 border-t-[3px] border-t-[#1C1C1C] bg-white p-4 shadow-sm">
             <div class="mb-1 flex items-center justify-between gap-3">
                 <h2 class="text-sm font-bold text-[#1C1C1C]">Acidentes no mapa</h2>
                 <a class="shrink-0 text-xs font-semibold text-[#7A0C14] hover:text-[#C8102E]" href="{% url 'painel' %}{% if query_string %}?{{ query_string }}{% endif %}">Ver mais →</a>
@@ -89,6 +89,17 @@
             </div>
             {% if grafico_ranking %}
                 {{ grafico_ranking|safe }}
+            {% else %}
+                <p class="p-8 text-center text-sm font-semibold text-[#78716C]">{{ mensagem_sem_registros }}</p>
+            {% endif %}
+        </article>
+        <article class="min-h-[400px] min-w-0 rounded-xl border border-stone-200 border-t-[3px] border-t-[#1C1C1C] bg-white p-4 shadow-sm xl:col-span-3">
+            <div class="mb-1 flex items-center justify-between gap-3">
+                <h2 class="text-sm font-bold text-[#1C1C1C]">Acidentes por dia e hora</h2>
+                <a class="shrink-0 text-xs font-semibold text-[#7A0C14] hover:text-[#C8102E]" href="{% url 'painel' %}{% if query_string %}?{{ query_string }}{% endif %}">Ver mais →</a>
+            </div>
+            {% if grafico_calor %}
+                {{ grafico_calor|safe }}
             {% else %}
                 <p class="p-8 text-center text-sm font-semibold text-[#78716C]">{{ mensagem_sem_registros }}</p>
             {% endif %}

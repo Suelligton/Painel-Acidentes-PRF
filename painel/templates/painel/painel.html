@@ -53,7 +53,7 @@
                 <p class="p-8 text-center font-semibold text-[#78716C]">{{ mensagem_sem_registros }}</p>
             {% endif %}
         </article>
-        <article class="min-w-0 rounded-xl border border-stone-200 border-t-[3px] border-t-[#1C1C1C] bg-white p-3 shadow-sm">
+        <article class="min-h-[400px] min-w-0 rounded-xl border border-stone-200 border-t-[3px] border-t-[#1C1C1C] bg-white p-3 shadow-sm xl:col-span-2">
             <h2 class="mb-1 text-sm font-bold text-[#1C1C1C]">Acidentes por dia e hora</h2>
             {% if graficos.calor %}{{ graficos.calor|safe }}{% else %}
                 <p class="p-8 text-center font-semibold text-[#78716C]">{{ mensagem_sem_registros }}</p>

@@ -281,7 +281,10 @@ def _grafico_evolucao_mensal(df, periodos, altura):
         .agg(acidentes=("id", "size"), mortos=("mortos", "sum"))
         .reindex(periodos, fill_value=0)
     )
-    rotulos = [_rotulo_periodo(periodo) for periodo in periodos]
+    rotulos = [
+        MESES_NOME[int(periodo.split("-")[1])]
+        for periodo in periodos
+    ]
     figura = make_subplots(specs=[[{"secondary_y": True}]])
     figura.add_trace(
         go.Scatter(
@@ -335,15 +338,24 @@ def _grafico_evolucao_mensal(df, periodos, altura):
         yshift=-10,
         font={"color": CORES_PMPB["vermelho"], "size": 11},
     )
-    figura.update_xaxes(title_text="", tickangle=-15)
+    figura.update_xaxes(title_text="", tickangle=0)
     figura.update_yaxes(title_text="", rangemode="tozero", secondary_y=False)
-    figura.update_yaxes(title_text="", rangemode="tozero", secondary_y=True)
+    figura.update_yaxes(
+        title_text="",
+        rangemode="tozero",
+        nticks=6,
+        tickformat="d",
+        showgrid=False,
+        secondary_y=True,
+    )
     figura.update_layout(
         height=altura,
         hovermode="x unified",
         margin={"l": 28, "r": 28, "t": 18, "b": 60},
     )
-    return aplicar_tema(figura)
+    figura = aplicar_tema(figura)
+    figura.update_yaxes(showgrid=False, secondary_y=True)
+    return figura
 
 
 def _grafico_mensal(df, periodos):
@@ -374,6 +386,9 @@ def _figura_barras(contagens, titulo, cor, altura_minima=300):
             "categoria": rotulos,
             "categoria_completa": categorias,
             "acidentes": contagens.to_numpy(),
+            "valor_formatado": [
+                _formatar_inteiro(valor) for valor in contagens.to_numpy()
+            ],
         }
     )
     figura = px.bar(
@@ -381,14 +396,14 @@ def _figura_barras(contagens, titulo, cor, altura_minima=300):
         x="acidentes",
         y="categoria",
         orientation="h",
-        text="acidentes",
+        text="valor_formatado",
         custom_data=["categoria_completa"],
         title=titulo,
         color_discrete_sequence=[cor or CORES_PMPB["vermelho"]],
         template="plotly_white",
     )
     figura.update_traces(
-        texttemplate="%{x:,.0f}",
+        texttemplate="%{text}",
         textposition="inside",
         textfont_color="white",
         cliponaxis=False,
@@ -396,10 +411,16 @@ def _figura_barras(contagens, titulo, cor, altura_minima=300):
     )
     figura = aplicar_tema(figura)
     figura.update_layout(
-        xaxis_title="Acidentes",
+        xaxis_title="",
         yaxis_title="",
         height=_altura_barras(rotulos, altura_minima),
         margin={"l": 160, "r": 25, "t": 55 if titulo else 10, "b": 30},
+    )
+    figura.update_xaxes(
+        showticklabels=False,
+        title_text="",
+        showgrid=False,
+        zeroline=False,
     )
     figura.update_yaxes(automargin=True)
     return figura
@@ -447,19 +468,50 @@ def _serie_mensal_home(df, periodos, chave):
     return _serie_indicador(dados, "periodo", chave).reindex(periodos, fill_value=0)
 
 
-def _grafico_sparkline(periodos, valores, cor):
-    if valores.empty:
+def _grafico_sparkline(periodos, valores, cor, chave):
+    if valores.empty or not periodos:
         return None
 
+    valores_numericos = valores.to_numpy(dtype="float64")
+    minimo = float(valores_numericos.min())
+    maximo = float(valores_numericos.max())
+    folga = (maximo - minimo) * 0.1
+    if folga == 0:
+        folga = max(abs(maximo) * 0.1, 0.1)
+
+    cor_hex = cor.lstrip("#")
+    rgb = tuple(int(cor_hex[indice : indice + 2], 16) for indice in (0, 2, 4))
+    preenchimento = f"rgba({rgb[0]}, {rgb[1]}, {rgb[2]}, 0.15)"
+    rotulos = [_rotulo_periodo(periodo) for periodo in periodos]
+    valores_formatados = [
+        _formatar_kpi(chave, valor) for valor in valores_numericos
+    ]
+    hovertemplate = "%{x}: %{customdata}<extra></extra>"
     figura = go.Figure(
-        go.Scatter(
-            x=periodos,
-            y=valores.to_numpy(),
-            mode="lines+markers",
-            line={"color": cor, "width": 2},
-            marker={"color": cor, "size": 3},
-            hoverinfo="skip",
-        )
+        [
+            go.Scatter(
+                x=rotulos,
+                y=valores_numericos,
+                customdata=valores_formatados,
+                mode="lines",
+                line={"color": cor, "width": 2},
+                fill="tozeroy",
+                fillcolor=preenchimento,
+                hovertemplate=hovertemplate,
+            ),
+            go.Scatter(
+                x=[rotulos[-1]],
+                y=[valores_numericos[-1]],
+                customdata=[valores_formatados[-1]],
+                mode="markers",
+                marker={
+                    "color": cor,
+                    "size": 6,
+                    "line": {"color": "white", "width": 1},
+                },
+                hovertemplate=hovertemplate,
+            ),
+        ]
     )
     figura.update_layout(
         template="plotly_white",
@@ -471,7 +523,11 @@ def _grafico_sparkline(periodos, valores, cor):
         showlegend=False,
     )
     figura.update_xaxes(visible=False, fixedrange=True)
-    figura.update_yaxes(visible=False, fixedrange=True, rangemode="tozero")
+    figura.update_yaxes(
+        visible=False,
+        fixedrange=True,
+        range=[minimo - folga, maximo + folga],
+    )
     return _figura_div(figura, config=CONFIG_GRAFICO_HOME)
 
 
@@ -506,7 +562,7 @@ def _preparar_tendencia_home(df, periodos, chave):
         "cor": cor,
         "variacao": variacao,
         "tipo_variacao": tipo_variacao,
-        "sparkline": _grafico_sparkline(periodos, valores, cor),
+        "sparkline": _grafico_sparkline(periodos, valores, cor, chave),
     }
 
 
@@ -532,9 +588,16 @@ def _grafico_causas_home(df):
 
 
 def _grafico_classificacao_home(df):
-    contagens = _agrupar_fatias_pequenas(
-        df["classificacao_acidente"].value_counts()
+    categorias = [
+        "Com Vítimas Fatais",
+        "Com Vítimas Feridas",
+        "Sem Vítimas",
+    ]
+    contagens = df["classificacao_acidente"].value_counts().reindex(
+        categorias,
+        fill_value=0,
     )
+    contagens = contagens.loc[contagens > 0]
     tabela = contagens.rename_axis("classificacao").reset_index(name="acidentes")
     figura = px.pie(
         tabela,
@@ -556,7 +619,7 @@ def _grafico_classificacao_home(df):
         template="plotly_white",
     )
     figura.update_traces(
-        textinfo="percent",
+        texttemplate="%{percent:.1%}",
         textposition="inside",
         hovertemplate="%{label}<br>Acidentes: %{value:,.0f}<extra></extra>",
     )
@@ -606,10 +669,17 @@ def _grafico_mapa_home(df, filtros):
     if pontos.empty:
         return None
 
-    centro = {
-        "lat": float(pontos["latitude"].mean()),
-        "lon": float(pontos["longitude"].mean()),
-    }
+    centro = (
+        {
+            "lat": -14,
+            "lon": -52,
+        }
+        if not filtros["uf"] and not filtros["municipio"]
+        else {
+            "lat": float(pontos["latitude"].mean()),
+            "lon": float(pontos["longitude"].mean()),
+        }
+    )
     if len(pontos) > 3000:
         pontos = pontos.sample(n=3000, random_state=1)
 
@@ -628,7 +698,7 @@ def _grafico_mapa_home(df, filtros):
     horarios = pontos["horario"].astype("string").fillna("Horário não informado")
     pontos["data_hora_hover"] = datas + " " + horarios
 
-    zoom = 9 if filtros["municipio"] else 6 if filtros["uf"] else 3.3
+    zoom = 9 if filtros["municipio"] else 6 if filtros["uf"] else 3.2
     figura = px.scatter_map(
         pontos,
         lat="latitude",
@@ -727,12 +797,89 @@ def _grafico_barras_indicador(df, coluna, chave, titulo, limite=10):
     )
     figura = aplicar_tema(figura)
     figura.update_layout(
-        xaxis_title=INDICADORES[chave]["nome"],
+        xaxis_title="",
         yaxis_title="",
         height=_altura_barras(rotulos),
         margin={"l": 160, "r": 30, "t": 55, "b": 35},
     )
+    figura.update_xaxes(
+        showticklabels=False,
+        title_text="",
+        showgrid=False,
+        zeroline=False,
+    )
     figura.update_yaxes(automargin=True)
+    return figura
+
+
+def _grafico_calor_base(tabela, chave=None):
+    dias_abreviados = ["Seg", "Ter", "Qua", "Qui", "Sex", "Sáb", "Dom"]
+    dias_completos = [
+        "Segunda",
+        "Terça",
+        "Quarta",
+        "Quinta",
+        "Sexta",
+        "Sábado",
+        "Domingo",
+    ]
+    medida = "acidentes" if chave is None else INDICADORES[chave]["nome"].lower()
+    formatar_valor = (
+        _formatar_inteiro
+        if chave is None
+        else lambda valor: _formatar_kpi(chave, valor)
+    )
+    valores = tabela.to_numpy()
+    customdata = [
+        [
+            f"{dias_completos[indice_dia]}, {hora}h: "
+            f"{formatar_valor(valor)} {medida}"
+            for hora, valor in enumerate(linha)
+        ]
+        for indice_dia, linha in enumerate(valores)
+    ]
+    figura = go.Figure(
+        go.Heatmap(
+            z=valores,
+            x=list(range(24)),
+            y=list(range(7)),
+            customdata=customdata,
+            colorscale=[
+                [0, "#FBF5F5"],
+                [0.5, "#E06666"],
+                [1, "#7A0C14"],
+            ],
+            zmin=0,
+            zmax=max(float(valores.max()), 1),
+            xgap=2,
+            ygap=2,
+            showscale=True,
+            colorbar={"thickness": 10, "len": 0.8},
+            hovertemplate="%{customdata}<extra></extra>",
+        )
+    )
+    figura = aplicar_tema(figura)
+    figura.update_layout(
+        height=380,
+        margin=dict(l=110, r=20, t=10, b=50),
+        showlegend=False,
+    )
+    figura.update_xaxes(
+        title_text="Hora do dia",
+        tickmode="linear",
+        tick0=0,
+        dtick=3,
+        ticksuffix="h",
+        showgrid=False,
+    )
+    figura.update_yaxes(
+        title_text="",
+        autorange="reversed",
+        tickmode="array",
+        tickvals=list(range(7)),
+        ticktext=dias_abreviados,
+        showgrid=False,
+    )
     return figura
 
 
@@ -741,34 +888,9 @@ def _grafico_calor_indicador(df, chave, filtros=None):
     tabela = (
         valores.unstack("hora")
         .reindex(index=DIAS_SEMANA, columns=range(24), fill_value=0)
+        .fillna(0)
     )
-    filtros = filtros or {}
-    mostrar_valores = bool(filtros.get("uf") or filtros.get("municipio"))
-    texto = (
-        (".2f" if INDICADORES[chave]["tipo"] == "razao" else True)
-        if mostrar_valores
-        else False
-    )
-    figura = px.imshow(
-        tabela,
-        x=[f"{hora:02d}" for hora in range(24)],
-        y=DIAS_SEMANA,
-        aspect="auto",
-        text_auto=texto,
-        labels={
-            "x": "Hora do dia",
-            "y": "Dia da semana",
-            "color": INDICADORES[chave]["nome"],
-        },
-        color_continuous_scale=[
-            [0, "#F5F5F4"],
-            [0.5, CORES_PMPB["dourado"]],
-            [1, CORES_PMPB["vermelho"]],
-        ],
-        title=f"{INDICADORES[chave]['nome']} por dia da semana e hora",
-        template="plotly_white",
-    )
-    return aplicar_tema(figura)
+    return _grafico_calor_base(tabela, chave)
 
 
 def _tabelas_indicador(df, chave):
@@ -826,25 +948,7 @@ def _grafico_calor(df, filtros=None):
         .unstack(fill_value=0)
         .reindex(index=DIAS_SEMANA, columns=range(24), fill_value=0)
     )
-    filtros = filtros or {}
-    figura = px.imshow(
-        tabela,
-        x=[f"{hora:02d}" for hora in range(24)],
-        y=DIAS_SEMANA,
-        aspect="auto",
-        text_auto=bool(filtros.get("uf") or filtros.get("municipio")),
-        labels={"x": "Hora do dia", "y": "Dia da semana", "color": "Acidentes"},
-        color_continuous_scale=[
-            [0, "#F5F5F4"],
-            [0.5, CORES_PMPB["dourado"]],
-            [1, CORES_PMPB["vermelho"]],
-        ],
-        title="Acidentes por dia da semana e hora",
-        template="plotly_white",
-    )
-    figura.update_xaxes(title_text="Hora do dia")
-    figura.update_yaxes(title_text="Dia da semana")
-    return aplicar_tema(figura)
+    return _grafico_calor_base(tabela)
 
 
 def _agrupar_fatias_pequenas(contagens):
@@ -1624,6 +1728,12 @@ def home(request):
             else None,
             "grafico_classificacao": _figura_div(
                 _grafico_classificacao_home(filtrado),
+                config=CONFIG_GRAFICO_HOME,
+            )
+            if not sem_registros
+            else None,
+            "grafico_calor": _figura_div(
+                _grafico_calor(filtrado, filtros),
                 config=CONFIG_GRAFICO_HOME,
             )
             if not sem_registros
